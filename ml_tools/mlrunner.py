@@ -10,7 +10,7 @@ from sklearn.cross_validation import KFold
 from mlrunner_utils import *
 from ml_utils import *
 import mlrunner_utils
-from mongo_tools.timeserie import get_daily_ts
+from mongo_tools.timeseries import get_daily_ts
 
 
 logger = logging.getLogger(__file__)
