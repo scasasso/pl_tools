@@ -66,7 +66,6 @@ class MLRunner(object):
                           _target_builder, _preds_builder)
 
     def run_build(self, rebuild_data=True, save=True, tag=''):
-        data_structure_train = None
         if rebuild_data is True:
             data_structure = self.build_data_structure(blind=False, raise_on_missing=False)
             data_structure_train = build_data_structure_train(data_structure)
@@ -159,13 +158,72 @@ class MLRunner(object):
         predictions_, data_structure_test = self.run_predict(write=write, field_day=field_day, field_value=field_value, tag=tag)
         datetimes, predictions = self._get_grouped_predictions(data_structure_test, predictions_)
 
+        logger.info('Pushing predictions to dashboard')
         for dt, preds in zip(datetimes, predictions):
             logger.debug('Predict dashboard at date %s' % dt.strftime('%Y-%m-%d'))
 
             try:
                 dict_to_push = {
                     "date": dt.strftime("%Y-%m-%dT00:00:00Z"),
-                    "pred": predictions,
+                    "pred": list(preds),
+                    "s": self.pl_config["pushId"],
+                    "p": float(self.pl_config["horizon"]) * float(self.pl_config["granularity"]),
+                }
+            except KeyError as e:
+                msg = 'You have to define \'pushId\', \'horizon\' and \'granularity\' in the pl_config'
+                logger.critical(msg)
+                raise KeyError(msg)
+
+            self.api_handler.push_update(push_dict=dict_to_push)
+
+    def run_update_dashboard(self, coll=None, push_key='real', db_uri=None, db_name=None, field_day=None, field_value=None, freq=None):
+
+        if self.api_handler.url is None or self.api_handler.host is None:
+            msg = 'You have to set both URL and HOST on the api_handler'
+            logger.critical(msg)
+            raise AttributeError(msg)
+
+        if coll is None:
+            coll = self.pl_config['target']
+
+        if db_uri is None or db_name is None or field_day is None or field_value is None or freq is None:
+            logger.info('database uri and name not provided: will search in the externals')
+            for ext in self.pl_config['externals']:
+                if ext['table'] != coll:
+                    continue
+
+                # Found. Replace what is needed
+                if db_uri is None:
+                    db_uri = ext['db_uri']
+                if db_name is None:
+                    db_name = ext['db_name']
+                if field_day is None:
+                    field_day = ext['params']['datetime_key']
+                if field_value is None:
+                    field_value = ext['params']['fields'][0]
+                if freq is None:
+                    freq = str(ext['params']['granularity'] / 60) + 'T'
+                    if freq == '60T':
+                        freq = '1H'
+
+        # Instantiate client and database
+        client = MongoClient(db_uri)
+        db = client[db_name]
+
+        # Get the data
+        df_tmp = get_daily_ts(db, coll, self.pl_config['load_start_dt'], self.pl_config['load_end_dt'],
+                              date_field=field_day, value_field=field_value,
+                              granularity=freq, out_format='dataframe',
+                              missing_pol='skip')
+
+        logger.info('Updating the dashboard')
+        for day, df_day in df_tmp.groupby(pd.Grouper(freq='1D')):
+            logger.debug('Update dashboard at date %s' % day.strftime('%Y-%m-%d'))
+
+            try:
+                dict_to_push = {
+                    "date": day.strftime("%Y-%m-%dT00:00:00Z"),
+                    push_key: df_day['v'].tolist(),
                     "s": self.pl_config["pushId"],
                     "p": float(self.pl_config["horizon"]) * float(self.pl_config["granularity"]),
                 }
@@ -421,7 +479,7 @@ class MLRunner(object):
         # Put into DB
         for dt, preds in zip(datetimes, grouped_preds):
             query = {field_day: dt}
-            preds_day = {field_value: preds.tolist()}
+            preds_day = {field_value: list(preds)}
             collection.update(query, {'$set': preds_day}, upsert=True)
 
         return
