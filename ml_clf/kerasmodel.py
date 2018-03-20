@@ -269,11 +269,14 @@ class KerasLSTM3(KerasModelContainer):
 
 class KerasModel(PLModel):
 
-    def __init__(self, model_container, nb_epochs=5, **model_args):
+    def __init__(self, model_container, nb_epochs=5, tmp_dir='/tmp', **model_args):
         PLModel.__init__(self, **model_args)
         self.model_container = model_container
         self.nb_epochs = nb_epochs
         self.fit_res = None
+        self.tmp_dir = tmp_dir
+        if not os.path.exists(self.tmp_dir):
+            os.mkdir(self.tmp_dir)
         
         return
 
@@ -311,7 +314,7 @@ class KerasModel(PLModel):
         callbacks = []
         if early_stop:
             callbacks = [EarlyStopping(monitor='val_loss', min_delta=min_delta, patience=2, verbose=1, mode='auto')]
-        callbacks.append(ModelCheckpoint(filepath='/tmp/weights.h5', verbose=1, save_best_only=True))
+        callbacks.append(ModelCheckpoint(filepath=os.path.join(self.tmp_dir, 'weights.h5'), verbose=1, save_best_only=True))
 
         if self.model is None:
             self.set_model(self.model_container.build_model(X_train_.shape[1]))
@@ -319,8 +322,8 @@ class KerasModel(PLModel):
                                       verbose=2, callbacks=callbacks)
 
         if use_best:
-            print 'Taking the best model from: /tmp/weights.h5'
-            self.model = load_model('/tmp/weights.h5')
+            print 'Taking the best model from: %s/weights.h5' % self.tmp_dir
+            self.model = load_model(os.path.join(self.tmp_dir, 'weights.h5'))
 
         return self.fit_res
 
