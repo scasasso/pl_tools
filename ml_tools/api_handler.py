@@ -24,6 +24,7 @@
 
 import json
 import requests
+import urllib3
 import logging
 
 # Convention: Always use logger with file name as key
@@ -35,6 +36,7 @@ class ApiHandler:
 
     def __init__(self):
         self.s = requests.Session()
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         self.host = None
         self.url = None
         return
@@ -56,7 +58,7 @@ class ApiHandler:
             logger.warning('Fails to push data: %s Error code: %s' % (json.dumps(payload), r.status_code))
             logger.warning(r.text)
         else:
-            logger.info('Loading URL with data OK.')
+            logger.debug('Loading URL with data OK.')
         return
 
     def push_delete(self, datetime):
