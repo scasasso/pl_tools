@@ -10,8 +10,8 @@ from sklearn.cross_validation import KFold
 from mlrunner_utils import *
 from ml_utils import *
 import mlrunner_utils
+from api_handler import ApiHandler
 from mongo_tools.timeseries import get_daily_ts
-
 
 logger = logging.getLogger(__file__)
 
@@ -23,10 +23,13 @@ class MLRunner(object):
         self.target = self.pl_config['target']
         self.target_type = 'target'
         self.target_builder = lambda df1, df2: df2[self.pl_config['target']]  # takes 2 DataFrames and return a Series
-        self.preds_builder  = lambda a, df1, df2: a  # takes 1 np array and 2 DataFrames and return a Series
+        self.preds_builder = lambda a, df1, df2: a  # takes 1 np array and 2 DataFrames and return a Series
         self.df_coll = None  # df with collection timeseries
         self.df_feat = None  # df with feature timeseries
         self.model_filepath = self.pl_config['model_filepath']
+
+        # Needed for Crystal
+        self.api_handler = ApiHandler()
 
     def reset_target(self, target, target_type, target_builder, preds_builder):
         logger.debug('Changing default target to %s' % target)
@@ -39,12 +42,12 @@ class MLRunner(object):
         if self.df_feat is not None and self.df_coll is not None:
             logger.debug('Calling the target builder')
             self.df_feat['target'] = self.target_builder(self.df_feat, self.df_coll)
-            
+
     def project_target_onto(self, D):
-        
+
         def _target_builder(df_feat_, df_coll_):
             return df_coll_[self.pl_config['target']] / df_feat_[D]
-                
+
         def _preds_builder(a, df_feat_, df_coll_):
             return a * df_feat_[D].values
 
@@ -94,10 +97,10 @@ class MLRunner(object):
         predictions = self.preds_builder(predictions, self.df_feat, self.df_coll)
 
         if write:
-            self._save_predictions(data_structure[:n_preds], predictions[:n_preds], field_day=field_day, field_value=field_value, tag=tag)
-            return
-        else:
-            return predictions
+            self._save_predictions(data_structure[:n_preds], predictions[:n_preds], field_day=field_day,
+                                   field_value=field_value, tag=tag)
+
+        return predictions, data_structure_test
 
     def run_validation(self, validation_type='cross_val', n_splits=5):
         data_structure = self.build_data_structure(blind=False, raise_on_missing=False)
@@ -146,13 +149,42 @@ class MLRunner(object):
         logger.info(score_str)
         return
 
+    def run_predict_dashboard(self, write=True, field_day='day', field_value='v', tag=''):
+
+        if self.api_handler.url is None or self.api_handler.host is None:
+            msg = 'You have to set both URL and HOST on the api_handler'
+            logger.critical(msg)
+            raise AttributeError(msg)
+
+        predictions_, data_structure_test = self.run_predict(write=write, field_day=field_day, field_value=field_value, tag=tag)
+        datetimes, predictions = self._get_grouped_predictions(data_structure_test, predictions_)
+
+        for dt, preds in zip(datetimes, predictions):
+            logger.debug('Predict dashboard at date %s' % dt.strftime('%Y-%m-%d'))
+
+            try:
+                dict_to_push = {
+                    "date": dt.strftime("%Y-%m-%dT00:00:00Z"),
+                    "pred": predictions,
+                    "s": self.pl_config["pushId"],
+                    "p": float(self.pl_config["horizon"]) * float(self.pl_config["granularity"]),
+                }
+            except KeyError as e:
+                msg = 'You have to define \'pushId\', \'horizon\' and \'granularity\' in the pl_config'
+                logger.critical(msg)
+                raise KeyError(msg)
+
+            self.api_handler.push_update(push_dict=dict_to_push)
+
     def build_data_structure(self, blind=False, raise_on_missing=False):
         lats = np.array(
-            [fe.get('latency', 0) for fe in self.pl_config['fields'] if not pd.isnull(fe.get('latency', None))] + [self.pl_config['latency']] + self.pl_config[
+            [fe.get('latency', 0) for fe in self.pl_config['fields'] if not pd.isnull(fe.get('latency', None))] + [
+                self.pl_config['latency']] + self.pl_config[
                 'reference'])
         max_lat = np.max(lats)
 
-        dt_start = self.pl_config['load_start_dt'] - timedelta(days=(max_lat * self.pl_config['granularity'] / (24 * 60 * 60))) - timedelta(
+        dt_start = self.pl_config['load_start_dt'] - timedelta(
+            days=(max_lat * self.pl_config['granularity'] / (24 * 60 * 60))) - timedelta(
             days=60)
         dt_end = self.pl_config['load_end_dt']
 
@@ -189,7 +221,7 @@ class MLRunner(object):
         calendar_features = ['day_of_week', 'hour_of_day', 'month_of_year', 'week_of_year', 'day_of_month']  # others?
         not_vis = []
         for field in self.pl_config['fields']:
-            field_name = field['name']            
+            field_name = field['name']
 
             # Setting the default latency
             if field.get('latency', None) is None:
@@ -211,11 +243,13 @@ class MLRunner(object):
                 elif feat == 'Average':
                     for win in self.pl_config['average']:
                         fname = '_'.join([field_name, feat.lower(), str(win)])
-                        self.df_feat[fname] = self.df_feat[field_name + '_laggedvalue'].rolling(win, min_periods=1).mean()
+                        self.df_feat[fname] = self.df_feat[field_name + '_laggedvalue'].rolling(win,
+                                                                                                min_periods=1).mean()
                 elif feat == 'ExpAverage':
                     for win in self.pl_config['exp_average']:
                         fname = '_'.join([field_name, feat.lower(), str(win)])
-                        self.df_feat[fname] = self.df_feat[field_name + '_laggedvalue'].ewm(span=win, min_periods=1).mean()
+                        self.df_feat[fname] = self.df_feat[field_name + '_laggedvalue'].ewm(span=win,
+                                                                                            min_periods=1).mean()
                 elif feat == 'Reference':
                     for lat in [v for v in list(set(self.pl_config['reference'])) if v > field['latency']]:
                         fname = '_'.join([field_name, feat.lower(), str(lat)])
@@ -237,11 +271,13 @@ class MLRunner(object):
                 elif feat == 'MaxPast':
                     for win in self.pl_config['max_past']:
                         fname = '_'.join([field_name, feat.lower(), str(win)])
-                        self.df_feat[fname] = self.df_feat[field_name + '_laggedvalue'].rolling(win, min_periods=1).max()
+                        self.df_feat[fname] = self.df_feat[field_name + '_laggedvalue'].rolling(win,
+                                                                                                min_periods=1).max()
                 elif feat == 'MinPast':
                     for win in self.pl_config['min_past']:
                         fname = '_'.join([field_name, feat.lower(), str(win)])
-                        self.df_feat[fname] = self.df_feat[field_name + '_laggedvalue'].rolling(win, min_periods=1).min()
+                        self.df_feat[fname] = self.df_feat[field_name + '_laggedvalue'].rolling(win,
+                                                                                                min_periods=1).min()
                 else:
                     raise NotImplementedError('Feature %s is not implemented yet' % feat)
 
@@ -270,14 +306,17 @@ class MLRunner(object):
             self.df_feat['target'] = self.target_builder(self.df_feat, self.df_coll)
 
             # Sanity check
-        if self.df_feat.loc[self.pl_config['load_start_dt']:, :].dropna().index[0].to_pydatetime() != self.pl_config['load_start_dt'] and raise_on_missing is True:
-            logger.debug(self.df_feat.loc[self.pl_config['load_start_dt']:, :].dropna().index[0].to_pydatetime(), self.pl_config['load_start_dt'])
+        if self.df_feat.loc[self.pl_config['load_start_dt']:, :].dropna().index[0].to_pydatetime() != self.pl_config[
+            'load_start_dt'] and raise_on_missing is True:
+            logger.debug(self.df_feat.loc[self.pl_config['load_start_dt']:, :].dropna().index[0].to_pydatetime(),
+                         self.pl_config['load_start_dt'])
             msg = 'There are missing values ' \
                   'in the period {s} to {e}'.format(s=self.pl_config['load_start_dt'].strftime('%Y-%m-%d'),
                                                     e=self.pl_config['load_end_dt'].strftime('%Y-%m-%d'))
             logger.critical(msg)
             raise ValueError(msg)
-        elif self.df_feat.loc[self.pl_config['load_start_dt']:, :].dropna().index[0].to_pydatetime() != self.pl_config['load_start_dt']:
+        elif self.df_feat.loc[self.pl_config['load_start_dt']:, :].dropna().index[0].to_pydatetime() != self.pl_config[
+            'load_start_dt']:
             # logger.debug(self.df_feat.loc[self.pl_config['load_start_dt']:, :].dropna().index[0].to_pydatetime(), self.pl_config['load_start_dt'])
             msg = 'There are missing values in the period ' \
                   '{s} to {e}'.format(s=self.pl_config['load_start_dt'].strftime('%Y-%m-%d'),
@@ -378,6 +417,17 @@ class MLRunner(object):
         db = client[self.pl_config['db_name_running']]
         collection = db[self.pl_config['production_table'] + tag]
 
+        datetimes, grouped_preds = self._get_grouped_predictions(data_structure_test, predictions)
+        # Put into DB
+        for dt, preds in zip(datetimes, grouped_preds):
+            query = {field_day: dt}
+            preds_day = {field_value: preds.tolist()}
+            collection.update(query, {'$set': preds_day}, upsert=True)
+
+        return
+
+    @staticmethod
+    def _get_grouped_predictions(data_structure_test, predictions):
         # Get the dates
         datetimes = sorted(
             [datetime(dd.year, dd.month, dd.day) for dd in list(set([d.date() for d in data_structure_test.index]))])
@@ -389,66 +439,57 @@ class MLRunner(object):
         if len(grouped_preds) != len(datetimes):
             raise ValueError('Mismatch: got {0} dates and {1} predictions'.format(len(datetimes), len(grouped_preds)))
 
-        # Put into DB
-        for dt, preds in zip(datetimes, grouped_preds):
-            query = {field_day: dt}
-            preds_day = {field_value: preds.tolist()}
-            collection.update(query, {'$set': preds_day}, upsert=True)
-
-        return
+        return datetimes, grouped_preds
 
 
-class MLRunnerEnsemble(object):
-    def __init__(self, runner_list):
-        self.runner_list = runner_list
-        self.model_filepath = self.pl_config['model_filepath']
-        self.runner_filepaths = []
-
-    def run_build(self, **kwargs):
-        for i, runn in enumerate(self.runner_list):
-            kwargs['save'] = False
-            runn.model_filepath = runn.model_filepath + '_ens%s' % i
-            runn.run_build(**kwargs)
-            runn._save_models(runn.model_filepath)
-            self.runner_filepaths.append(runn.model_filepath)
-        self._save_models(model_filepath)
-
-    def run_predict(self, **kwargs):
-        preds_all = []
-        for i, runn in enumerate(self.runner_list):
-            kwargs['write'] = False
-            runn.model_filepath = runn.model_filepath + '_ens%s' % i
-            preds = runn.run_predict(**kwargs)
-            preds_all.append(preds)
-        preds_all = np.asarray(preds_all)
-
-        n = np.max(map(len, predictions))
-        preds_all = [np.pad(a, (n - len(a), 0), 'constant', constant_values=(np.nan, np.nan)) for a in preds_all]
-
-        preds_all = np.nanmean(preds_all, axis=0)
-
-        # Borrow data_structure from first runner (ugly)
-        data_structure_test = self.runner_list[0].df_feat.copy()
-
-
-    def run_validation(self):
-        pass
-
-    def _save_models(self, model_filepath):
-        logger.info('Save model: start')
-        global_json = {'models_filepath': [],
-                       'models_type': [],
-                       'models_class': [],
-                       'models_scaler': []}
-        for index, path in enumerate(self.runner_filepaths):
-            global_json['models_filepath'].append(path)
-            global_json['models_type'].append('runner')
-            global_json['models_class'].append(MLRunner.__class__.__name__)
-            global_json['models_scaler'].append(None)
-
-        fw = open(model_filepath, 'w')
-        fw.write(json.dumps(global_json))
-        fw.close()
-        logger.info('Save model: end')
-
-        
+# class MLRunnerEnsemble(object):
+#     def __init__(self, runner_list):
+#         self.runner_list = runner_list
+#         self.model_filepath = self.pl_config['model_filepath']
+#         self.runner_filepaths = []
+#
+#     def run_build(self, **kwargs):
+#         for i, runn in enumerate(self.runner_list):
+#             kwargs['save'] = False
+#             runn.model_filepath = runn.model_filepath + '_ens%s' % i
+#             runn.run_build(**kwargs)
+#             runn._save_models(runn.model_filepath)
+#             self.runner_filepaths.append(runn.model_filepath)
+#         self._save_models(model_filepath)
+#
+#     def run_predict(self, **kwargs):
+#         preds_all = []
+#         for i, runn in enumerate(self.runner_list):
+#             kwargs['write'] = False
+#             runn.model_filepath = runn.model_filepath + '_ens%s' % i
+#             preds = runn.run_predict(**kwargs)
+#             preds_all.append(preds)
+#         preds_all = np.asarray(preds_all)
+#
+#         n = np.max(map(len, predictions))
+#         preds_all = [np.pad(a, (n - len(a), 0), 'constant', constant_values=(np.nan, np.nan)) for a in preds_all]
+#
+#         preds_all = np.nanmean(preds_all, axis=0)
+#
+#         # Borrow data_structure from first runner (ugly)
+#         data_structure_test = self.runner_list[0].df_feat.copy()
+#
+#     def run_validation(self):
+#         pass
+#
+#     def _save_models(self, model_filepath):
+#         logger.info('Save model: start')
+#         global_json = {'models_filepath': [],
+#                        'models_type': [],
+#                        'models_class': [],
+#                        'models_scaler': []}
+#         for index, path in enumerate(self.runner_filepaths):
+#             global_json['models_filepath'].append(path)
+#             global_json['models_type'].append('runner')
+#             global_json['models_class'].append(MLRunner.__class__.__name__)
+#             global_json['models_scaler'].append(None)
+#
+#         fw = open(model_filepath, 'w')
+#         fw.write(json.dumps(global_json))
+#         fw.close()
+#         logger.info('Save model: end')
