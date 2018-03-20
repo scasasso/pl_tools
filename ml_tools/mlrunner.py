@@ -100,7 +100,7 @@ class MLRunner(object):
             self._save_predictions(data_structure[:n_preds], predictions[:n_preds], field_day=field_day,
                                    field_value=field_value, tag=tag)
 
-        return predictions, data_structure_test
+        return predictions[:n_preds], data_structure[:n_preds]
 
     def run_validation(self, validation_type='cross_val', n_splits=5):
         data_structure = self.build_data_structure(blind=False, raise_on_missing=False)
