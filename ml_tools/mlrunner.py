@@ -11,15 +11,15 @@ from mlrunner_utils import *
 from ml_utils import *
 import mlrunner_utils
 from api_handler import ApiHandler
-from mongo_tools.timeseries import get_daily_ts
+from mongo_tools.timeseries import get_daily_ts, write_daily_ts
 
 logger = logging.getLogger(__file__)
 
 
 class MLRunner(object):
-    def __init__(self, models=None, pl_config=None):
-        self.models = models
+    def __init__(self, pl_config=None):
         self.pl_config = pl_config
+        self.models = self.pl_config['classifiers']
         self.target = self.pl_config['target']
         self.target_type = 'target'
         self.target_builder = lambda df1, df2: df2[self.pl_config['target']]  # takes 2 DataFrames and return a Series
@@ -27,6 +27,11 @@ class MLRunner(object):
         self.df_coll = None  # df with collection timeseries
         self.df_feat = None  # df with feature timeseries
         self.model_filepath = self.pl_config['model_filepath']
+
+        # Init the target
+        if self.pl_config.get('target_transf', None) is not None:
+            func, feat, tag = self.pl_config['target_transf']
+            getattr(self, func)(feat)
 
         # Needed for Crystal
         self.api_handler = ApiHandler()
@@ -65,7 +70,7 @@ class MLRunner(object):
         self.reset_target('{orig}_minus_{subt}'.format(orig=self.pl_config['target'], subt=S), 'target_minus_feature',
                           _target_builder, _preds_builder)
 
-    def run_build(self, rebuild_data=True, save=True, tag=''):
+    def run_build(self, rebuild_data=True, save=True):
         if rebuild_data is True:
             data_structure = self.build_data_structure(blind=False, raise_on_missing=False)
             data_structure_train = build_data_structure_train(data_structure)
@@ -79,25 +84,25 @@ class MLRunner(object):
         self._fit_models(data_structure_train)
 
         if save:
-            self._save_models(tag=tag)
+            self._save_models()
 
         return
 
-    def run_predict(self, write=True, field_day='day', field_value='v', tag=''):
+    def run_predict(self, write=True, field_day='day', field_value='v'):
         data_structure = self.build_data_structure(blind=True, raise_on_missing=False)
         dt_start = pd.Timestamp(self.pl_config['load_start_dt'])
         dt_end = pd.Timestamp(self.pl_config['load_end_dt']) + pd.Timedelta(hours=23) + pd.Timedelta(minutes=59)
         n_preds = len(data_structure[dt_start: dt_end])
         data_structure_test = build_data_structure_test(data_structure)
 
-        self.models = load_models(self.model_filepath + tag)
+        self.models = load_models(self.model_filepath)
 
         predictions = self._score_models(data_structure_test)
         predictions = self.preds_builder(predictions, self.df_feat, self.df_coll)
 
         if write:
             self._save_predictions(data_structure[:n_preds], predictions[:n_preds], field_day=field_day,
-                                   field_value=field_value, tag=tag)
+                                   field_value=field_value)
 
         return predictions[:n_preds], data_structure[:n_preds]
 
@@ -148,14 +153,14 @@ class MLRunner(object):
         logger.info(score_str)
         return
 
-    def run_predict_dashboard(self, write=True, field_day='day', field_value='v', tag=''):
+    def run_predict_dashboard(self, write=True, field_day='day', field_value='v'):
 
         if self.api_handler.url is None or self.api_handler.host is None:
             msg = 'You have to set both URL and HOST on the api_handler'
             logger.critical(msg)
             raise AttributeError(msg)
 
-        predictions_, data_structure_test = self.run_predict(write=write, field_day=field_day, field_value=field_value, tag=tag)
+        predictions_, data_structure_test = self.run_predict(write=write, field_day=field_day, field_value=field_value)
         datetimes, predictions = self._get_grouped_predictions(data_structure_test, predictions_)
 
         logger.info('Pushing predictions to dashboard')
@@ -205,13 +210,15 @@ class MLRunner(object):
                     freq = str(ext['params']['granularity'] / 60) + 'T'
                     if freq == '60T':
                         freq = '1H'
+                break
 
         # Instantiate client and database
         client = MongoClient(db_uri)
         db = client[db_name]
 
         # Get the data
-        df_tmp = get_daily_ts(db, coll, self.pl_config['load_start_dt'], self.pl_config['load_end_dt'],
+        df_tmp = get_daily_ts(db, coll, self.pl_config['load_start_dt'],
+                              self.pl_config['load_end_dt'] + timedelta(hours=23) + timedelta(minutes=59),
                               date_field=field_day, value_field=field_value,
                               granularity=freq, out_format='dataframe',
                               missing_pol='skip')
@@ -262,7 +269,7 @@ class MLRunner(object):
                 func = getattr(mlrunner_utils, external['indicators'][0])
                 df_tmp = func(db, self.pl_config, dt_start, dt_end, freq)
             else:
-                df_tmp = get_daily_ts(db, external['table'], dt_start, dt_end,
+                df_tmp = get_daily_ts(db, external['table'], dt_start, dt_end + timedelta(hours=23) + timedelta(minutes=59),
                                       date_field=params['datetime_key'], value_field=params['fields'][0],
                                       granularity=freq, out_format='dataframe',
                                       missing_pol='skip')
@@ -435,10 +442,10 @@ class MLRunner(object):
         logger.info('Model prediction: end')
         return predictions
 
-    def _save_models(self, tag):
+    def _save_models(self):
         logger.info('Save model: start')
 
-        model_filepath = self.model_filepath + tag
+        model_filepath = self.model_filepath
         global_json = {'models_filepath': [],
                        'models_type': [],
                        'models_class': [],
@@ -470,10 +477,10 @@ class MLRunner(object):
 
         return
 
-    def _save_predictions(self, data_structure_test, predictions, field_day='day', field_value='v', tag=''):
+    def _save_predictions(self, data_structure_test, predictions, field_day='day', field_value='v'):
         client = MongoClient(self.pl_config['db_uri_running'])
         db = client[self.pl_config['db_name_running']]
-        collection = db[self.pl_config['production_table'] + tag]
+        collection = db[self.pl_config['production_table']]
 
         datetimes, grouped_preds = self._get_grouped_predictions(data_structure_test, predictions)
         # Put into DB
@@ -500,54 +507,172 @@ class MLRunner(object):
         return datetimes, grouped_preds
 
 
-# class MLRunnerEnsemble(object):
-#     def __init__(self, runner_list):
-#         self.runner_list = runner_list
-#         self.model_filepath = self.pl_config['model_filepath']
-#         self.runner_filepaths = []
-#
-#     def run_build(self, **kwargs):
-#         for i, runn in enumerate(self.runner_list):
-#             kwargs['save'] = False
-#             runn.model_filepath = runn.model_filepath + '_ens%s' % i
-#             runn.run_build(**kwargs)
-#             runn._save_models(runn.model_filepath)
-#             self.runner_filepaths.append(runn.model_filepath)
-#         self._save_models(model_filepath)
-#
-#     def run_predict(self, **kwargs):
-#         preds_all = []
-#         for i, runn in enumerate(self.runner_list):
-#             kwargs['write'] = False
-#             runn.model_filepath = runn.model_filepath + '_ens%s' % i
-#             preds = runn.run_predict(**kwargs)
-#             preds_all.append(preds)
-#         preds_all = np.asarray(preds_all)
-#
-#         n = np.max(map(len, predictions))
-#         preds_all = [np.pad(a, (n - len(a), 0), 'constant', constant_values=(np.nan, np.nan)) for a in preds_all]
-#
-#         preds_all = np.nanmean(preds_all, axis=0)
-#
-#         # Borrow data_structure from first runner (ugly)
-#         data_structure_test = self.runner_list[0].df_feat.copy()
-#
-#     def run_validation(self):
-#         pass
-#
-#     def _save_models(self, model_filepath):
-#         logger.info('Save model: start')
-#         global_json = {'models_filepath': [],
-#                        'models_type': [],
-#                        'models_class': [],
-#                        'models_scaler': []}
-#         for index, path in enumerate(self.runner_filepaths):
-#             global_json['models_filepath'].append(path)
-#             global_json['models_type'].append('runner')
-#             global_json['models_class'].append(MLRunner.__class__.__name__)
-#             global_json['models_scaler'].append(None)
-#
-#         fw = open(model_filepath, 'w')
-#         fw.write(json.dumps(global_json))
-#         fw.close()
-#         logger.info('Save model: end')
+class MLBlender(object):
+    def __init__(self, pl_config):
+        self.models = []
+        self.pl_config = pl_config
+        self.target = self.pl_config['target']
+        self._init_models()
+        self.df_preds = pd.DataFrame()
+
+        # Needed for Crystal
+        self.api_handler = ApiHandler()
+
+    def _init_models(self):
+        if 'pl_configs' not in self.pl_config:
+            msg = '\'pl_configs\' key must be defined in the pl_config of the blender'
+            logger.critical(msg)
+            raise KeyError(msg)
+
+        for cfg in self.pl_config['pl_configs']:
+            target_ = cfg['target']
+            model_params = dict()
+            model_params['table'] = cfg['production_table']
+            model_params['db_uri'] = cfg['db_uri_running']
+            model_params['db_name'] = cfg['db_name_running']
+
+            # Now we try to fetch the field_date, field_value and granularity
+            # FIXME: could be more elegant here...
+            for ext in cfg['externals']:
+                if ext['table'] != target_:
+                    continue
+
+                # Found. Get what is needed
+                model_params['field_day'] = ext['params']['datetime_key']
+                model_params['field_value'] = ext['params']['fields'][0]
+                freq = str(ext['params']['granularity'] / 60) + 'T'
+                if freq == '60T':
+                    freq = '1H'
+                model_params['freq'] = freq
+
+                break
+
+            self.models.append(model_params)
+
+        # Sanity check
+        if not len(np.unique([m['freq'] for m in self.models])) == 1:
+            msg = 'You are trying to blend models with different granularity'
+            logger.critical(msg)
+            raise ValueError(msg)
+
+    def _get_data(self):
+        # Get the predictions from models in the list
+        dfs_pred = []
+        for model in self.models:
+            # Model prediction data
+            client_model = MongoClient(model['db_uri'])
+            df_model = get_daily_ts(client_model[model['db_name']], model['table'],
+                                    self.pl_config['load_start_dt'],
+                                    self.pl_config['load_end_dt'] + timedelta(hours=23) + timedelta(minutes=59),
+                                    date_field=model['field_day'], value_field=model['field_value'],
+                                    granularity=model['freq'], out_format='dataframe', missing_pol='raise',
+                                    verbose=0)
+            df_model = df_model.rename({model['field_value']: model['table']}, axis=1)
+            dfs_pred.append(df_model)
+
+        # Concatenate
+        self.df_preds = pd.concat(dfs_pred, axis=1)
+
+        return
+
+    def run_predict(self, write=True, field_day='day', field_value='v'):
+        client = MongoClient(self.pl_config['db_uri_running'])
+        db = client[self.pl_config['db_name_running']]
+        collection = self.pl_config['production_table']
+
+        self._get_data()
+
+        self.df_preds['blend'] = self.df_preds.mean(axis=1)
+
+        if write:
+            write_daily_ts(db, collection, self.df_preds['blend'],
+                           date_field=field_day, value_field=field_value)
+
+        return self.df_preds['blend'].copy()
+
+    def run_predict_dashboard(self, write=True, field_day='day', field_value='v'):
+
+        if self.api_handler.url is None or self.api_handler.host is None:
+            msg = 'You have to set both URL and HOST on the api_handler'
+            logger.critical(msg)
+            raise AttributeError(msg)
+
+        preds = self.run_predict(write=write, field_day=field_day, field_value=field_value)
+        datetimes = [dt.to_pydatetime() for dt in preds.index]
+        predictions = list(preds.values)
+
+        logger.info('Pushing predictions to dashboard')
+        for dt, preds in zip(datetimes, predictions):
+            logger.debug('Predict dashboard at date %s' % dt.strftime('%Y-%m-%d'))
+
+            try:
+                dict_to_push = {
+                    "date": dt.strftime("%Y-%m-%dT00:00:00Z"),
+                    "pred": list(preds),
+                    "s": self.pl_config["pushId"],
+                    "p": float(self.pl_config["horizon"]) * float(self.pl_config["granularity"]),
+                }
+            except KeyError as e:
+                msg = 'You have to define \'pushId\', \'horizon\' and \'granularity\' in the pl_config'
+                logger.critical(msg)
+                raise KeyError(msg)
+
+            self.api_handler.push_update(push_dict=dict_to_push)
+
+    def run_update_dashboard(self, coll=None, push_key='real', db_uri=None, db_name=None, field_day=None, field_value=None, freq=None):
+
+        if self.api_handler.url is None or self.api_handler.host is None:
+            msg = 'You have to set both URL and HOST on the api_handler'
+            logger.critical(msg)
+            raise AttributeError(msg)
+
+        if coll is None:
+            coll = self.pl_config['target']
+
+        if db_uri is None or db_name is None or field_day is None or field_value is None or freq is None:
+            logger.info('database uri and name not provided: will search in the externals')
+            for ext in self.pl_config['externals']:
+                if ext['table'] != coll:
+                    continue
+
+                # Found. Replace what is needed
+                if db_uri is None:
+                    db_uri = ext['db_uri']
+                if db_name is None:
+                    db_name = ext['db_name']
+                if field_day is None:
+                    field_day = ext['params']['datetime_key']
+                if field_value is None:
+                    field_value = ext['params']['fields'][0]
+                if freq is None:
+                    freq = str(ext['params']['granularity'] / 60) + 'T'
+                    if freq == '60T':
+                        freq = '1H'
+
+        # Instantiate client and database
+        client = MongoClient(db_uri)
+        db = client[db_name]
+
+        # Get the data
+        df_tmp = get_daily_ts(db, coll, self.pl_config['load_start_dt'], self.pl_config['load_end_dt'] + timedelta(hours=23) + timedelta(minutes=59),
+                              date_field=field_day, value_field=field_value,
+                              granularity=freq, out_format='dataframe',
+                              missing_pol='skip')
+
+        logger.info('Updating the dashboard')
+        for day, df_day in df_tmp.groupby(pd.Grouper(freq='1D')):
+            logger.debug('Update dashboard at date %s' % day.strftime('%Y-%m-%d'))
+
+            try:
+                dict_to_push = {
+                    "date": day.strftime("%Y-%m-%dT00:00:00Z"),
+                    push_key: df_day['v'].tolist(),
+                    "s": self.pl_config["pushId"],
+                    "p": float(self.pl_config["horizon"]) * float(self.pl_config["granularity"]),
+                }
+            except KeyError as e:
+                msg = 'You have to define \'pushId\', \'horizon\' and \'granularity\' in the pl_config'
+                logger.critical(msg)
+                raise KeyError(msg)
+
+            self.api_handler.push_update(push_dict=dict_to_push)
