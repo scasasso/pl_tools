@@ -88,7 +88,7 @@ class MLRunner(object):
 
         return
 
-    def run_predict(self, write=True, field_day='day', field_value='v'):
+    def run_predict(self, write=True, field_day='day', field_value='v', rnt_tag=''):
         data_structure = self.build_data_structure(blind=True, raise_on_missing=False)
         dt_start = pd.Timestamp(self.pl_config['load_start_dt'])
         dt_end = pd.Timestamp(self.pl_config['load_end_dt']) + pd.Timedelta(hours=23) + pd.Timedelta(minutes=59)
@@ -102,7 +102,7 @@ class MLRunner(object):
 
         if write:
             self._save_predictions(data_structure[:n_preds], predictions[:n_preds], field_day=field_day,
-                                   field_value=field_value)
+                                   field_value=field_value, rnt_tag=rnt_tag)
 
         return predictions[:n_preds], data_structure[:n_preds]
 
@@ -153,14 +153,15 @@ class MLRunner(object):
         logger.info(score_str)
         return
 
-    def run_predict_dashboard(self, write=True, field_day='day', field_value='v'):
+    def run_predict_dashboard(self, write=True, field_day='day', field_value='v', rnt_tag=''):
 
         if self.api_handler.url is None or self.api_handler.host is None:
             msg = 'You have to set both URL and HOST on the api_handler'
             logger.critical(msg)
             raise AttributeError(msg)
 
-        predictions_, data_structure_test = self.run_predict(write=write, field_day=field_day, field_value=field_value)
+        predictions_, data_structure_test = self.run_predict(write=write, field_day=field_day, field_value=field_value,
+                                                             rnt_tag=rnt_tag)
         datetimes, predictions = self._get_grouped_predictions(data_structure_test, predictions_)
 
         logger.info('Pushing predictions to dashboard')
@@ -477,10 +478,10 @@ class MLRunner(object):
 
         return
 
-    def _save_predictions(self, data_structure_test, predictions, field_day='day', field_value='v'):
+    def _save_predictions(self, data_structure_test, predictions, field_day='day', field_value='v', rnt_tag=''):
         client = MongoClient(self.pl_config['db_uri_running'])
         db = client[self.pl_config['db_name_running']]
-        collection = db[self.pl_config['production_table']]
+        collection = db[self.pl_config['production_table'] + rnt_tag]
 
         datetimes, grouped_preds = self._get_grouped_predictions(data_structure_test, predictions)
         # Put into DB
@@ -512,8 +513,9 @@ class MLBlender(object):
         self.models = []
         self.pl_config = pl_config
         self.target = self.pl_config['target']
-        self._init_models()
         self.df_preds = pd.DataFrame()
+        self.target_params = None
+        self._init_models()
 
         # Needed for Crystal
         self.api_handler = ApiHandler()
@@ -537,12 +539,24 @@ class MLBlender(object):
                 if ext['table'] != target_:
                     continue
 
-                # Found. Get what is needed
-                model_params['field_day'] = ext['params']['datetime_key']
-                model_params['field_value'] = ext['params']['fields'][0]
+                # Granularity to freq string
                 freq = str(ext['params']['granularity'] / 60) + 'T'
                 if freq == '60T':
                     freq = '1H'
+
+                # Retrieve the target info for possible future usage
+                if self.target_params is None:
+                    self.target_params = {}
+                    self.target_params['table'] = target_
+                    self.target_params['db_uri'] = ext['db_uri']
+                    self.target_params['db_name'] = ext['db_name']
+                    self.target_params['field_day'] = ext['params']['datetime_key']
+                    self.target_params['field_value'] = ext['params']['fields'][0]
+                    self.target_params['freq'] = freq
+
+                # Found. Get what is needed
+                model_params['field_day'] = ext['params']['datetime_key']
+                model_params['field_value'] = ext['params']['fields'][0]
                 model_params['freq'] = freq
 
                 break
@@ -555,7 +569,7 @@ class MLBlender(object):
             logger.critical(msg)
             raise ValueError(msg)
 
-    def _get_data(self):
+    def _get_data(self, blind=True):
         # Get the predictions from models in the list
         dfs_pred = []
         for model in self.models:
@@ -570,19 +584,36 @@ class MLBlender(object):
             df_model = df_model.rename({model['field_value']: model['table']}, axis=1)
             dfs_pred.append(df_model)
 
-        # Concatenate
+        # Concatenate predictions
         self.df_preds = pd.concat(dfs_pred, axis=1)
+        self.df_preds['blend'] = self.df_preds.mean(axis=1)
+
+        if blind is not True:
+            # Model prediction data
+            client_model = MongoClient(self.target_params['db_uri'])
+            df_target = get_daily_ts(client_model[self.target_params['db_name']], self.target_params['table'],
+                                     self.pl_config['load_start_dt'],
+                                     self.pl_config['load_end_dt'] + timedelta(hours=23) + timedelta(minutes=59),
+                                     date_field=self.target_params['field_day'], value_field=self.target_params['field_value'],
+                                     granularity=self.target_params['freq'], out_format='dataframe', missing_pol='raise',
+                                     verbose=0)
+            df_target = df_target.rename({self.target_params['field_value']: 'target'}, axis=1)
+            self.df_preds = pd.concat([self.df_preds, df_target], axis=1)
 
         return
 
-    def run_predict(self, write=True, field_day='day', field_value='v'):
+    def run_build(self):
+        msg = 'run_build is not (yet) supported for MLBlender objects. Build all the models of the ensemble separately,' \
+              'call run_predict on each of them and then use run_predict/run_validate from the MLBlender objects.'
+        logger.error(msg)
+        raise NotImplementedError(msg)
+
+    def run_predict(self, write=True, field_day='day', field_value='v', rnt_tag=''):
         client = MongoClient(self.pl_config['db_uri_running'])
         db = client[self.pl_config['db_name_running']]
-        collection = self.pl_config['production_table']
+        collection = self.pl_config['production_table'] + rnt_tag
 
         self._get_data()
-
-        self.df_preds['blend'] = self.df_preds.mean(axis=1)
 
         if write:
             write_daily_ts(db, collection, self.df_preds['blend'],
@@ -590,16 +621,57 @@ class MLBlender(object):
 
         return self.df_preds['blend'].copy()
 
-    def run_predict_dashboard(self, write=True, field_day='day', field_value='v'):
+    def run_validation(self, validation_type='cross_val', n_splits=5):
+        # We don't have to build the data and the models, just take the preds from database
+        self._get_data(blind=False)
+
+        # This is jut because of the (stupid) design of TimeSeriesSplit...
+        cols = [c for c in self.df_preds.columns if c not in ['blend', 'target']]
+        X = self.df_preds[cols].as_matrix()
+        y = self.df_preds['target'].values
+        preds = self.df_preds['blend'].values
+
+        scores = []
+        if validation_type == 'cross_val':
+            cv = KFold(len(y), n_folds=n_splits, shuffle=True)
+        elif validation_type == 'timeseries_val':
+            cv = TimeSeriesSplit(n=len(y), n_splits=n_splits).split(X)
+        else:
+            msg = 'Validation type %s is not supported: choose among \'cross_val\', \'timeseries_val\'' % validation_type
+            logger.critical(msg)
+            raise ValueError(msg)
+
+        logger.info('Will run validation type {val_type} on {n} folds'.format(val_type=validation_type, n=n_splits))
+        for icv, (train_index, test_index) in enumerate(cv):
+            logger.info('Runnig validation fold {}'.format(icv))
+
+            # Use only the test indices...
+            y_test, predictions = y[test_index], preds[test_index]
+
+            # Get the scores
+            cv_scores = get_scores(y_test, predictions, ttype=self.pl_config['learning_type'])
+
+            logger.info('Fold {0}, scores = {1}'.format(icv, str(cv_scores)))
+            scores.append(cv_scores)
+
+        # Print average results
+        logger.info('CV average results:')
+        score_str = ''
+        for metric in scores[0].keys():
+            score_str += '\n {metric} = {val:.4f}'.format(metric=metric, val=np.mean([d[metric] for d in scores]))
+        logger.info(score_str)
+        return
+
+    def run_predict_dashboard(self, write=True, field_day='day', field_value='v', rnt_tag=''):
 
         if self.api_handler.url is None or self.api_handler.host is None:
             msg = 'You have to set both URL and HOST on the api_handler'
             logger.critical(msg)
             raise AttributeError(msg)
 
-        preds = self.run_predict(write=write, field_day=field_day, field_value=field_value)
-        datetimes = [dt.to_pydatetime() for dt in preds.index]
-        predictions = list(preds.values)
+        # Get predictions and split them by day
+        predictions = self.run_predict(write=write, field_day=field_day, field_value=field_value, rnt_tag=rnt_tag)
+        datetimes, predictions = self._get_grouped_predictions_from_series(predictions)
 
         logger.info('Pushing predictions to dashboard')
         for dt, preds in zip(datetimes, predictions):
@@ -631,23 +703,14 @@ class MLBlender(object):
 
         if db_uri is None or db_name is None or field_day is None or field_value is None or freq is None:
             logger.info('database uri and name not provided: will search in the externals')
-            for ext in self.pl_config['externals']:
-                if ext['table'] != coll:
-                    continue
 
-                # Found. Replace what is needed
-                if db_uri is None:
-                    db_uri = ext['db_uri']
-                if db_name is None:
-                    db_name = ext['db_name']
-                if field_day is None:
-                    field_day = ext['params']['datetime_key']
-                if field_value is None:
-                    field_value = ext['params']['fields'][0]
-                if freq is None:
-                    freq = str(ext['params']['granularity'] / 60) + 'T'
-                    if freq == '60T':
-                        freq = '1H'
+            # We stored already the target info in the target_params attribute
+            coll = self.target_params['table']
+            db_uri = self.target_params['db_uri']
+            db_name = self.target_params['db_name']
+            field_day = self.target_params['field_day']
+            field_value = self.target_params['field_value']
+            freq = self.target_params['freq']
 
         # Instantiate client and database
         client = MongoClient(db_uri)
@@ -676,3 +739,18 @@ class MLBlender(object):
                 raise KeyError(msg)
 
             self.api_handler.push_update(push_dict=dict_to_push)
+
+    @staticmethod
+    def _get_grouped_predictions_from_series(predictions):
+
+        datetimes, grouped_preds = [], []
+        for day, s_day in predictions.groupby(pd.Grouper(freq='1D')):
+            datetimes.append(day.to_pydatetime())
+            grouped_preds.append(list(s_day.values))
+
+        # Sanity check
+        if len(grouped_preds) != len(datetimes):
+            raise ValueError('Mismatch: got {0} dates and {1} predictions'.format(len(datetimes), len(grouped_preds)))
+
+        return datetimes, grouped_preds
+
