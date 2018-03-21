@@ -276,7 +276,7 @@ class KerasModel(PLModel):
         self.fit_res = None
         self.tmp_dir = tmp_dir
         if not os.path.exists(self.tmp_dir):
-            os.mkdir(self.tmp_dir)
+            os.makedirs(self.tmp_dir)
         
         return
 
