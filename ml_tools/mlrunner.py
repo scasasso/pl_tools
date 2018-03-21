@@ -172,7 +172,7 @@ class MLRunner(object):
                 dict_to_push = {
                     "date": dt.strftime("%Y-%m-%dT00:00:00Z"),
                     "pred": list(preds),
-                    "s": self.pl_config["pushId"],
+                    "s": self.pl_config["pushId"] + rnt_tag,
                     "p": float(self.pl_config["horizon"]) * float(self.pl_config["granularity"]),
                 }
             except KeyError as e:
@@ -182,7 +182,7 @@ class MLRunner(object):
 
             self.api_handler.push_update(push_dict=dict_to_push)
 
-    def run_update_dashboard(self, coll=None, push_key='real', db_uri=None, db_name=None, field_day=None, field_value=None, freq=None):
+    def run_update_dashboard(self, coll=None, push_key='real', db_uri=None, db_name=None, field_day=None, field_value=None, freq=None, rnt_tag=''):
 
         if self.api_handler.url is None or self.api_handler.host is None:
             msg = 'You have to set both URL and HOST on the api_handler'
@@ -232,7 +232,7 @@ class MLRunner(object):
                 dict_to_push = {
                     "date": day.strftime("%Y-%m-%dT00:00:00Z"),
                     push_key: df_day['v'].tolist(),
-                    "s": self.pl_config["pushId"],
+                    "s": self.pl_config["pushId"] + rnt_tag,
                     "p": float(self.pl_config["horizon"]) * float(self.pl_config["granularity"]),
                 }
             except KeyError as e:
@@ -681,7 +681,7 @@ class MLBlender(object):
                 dict_to_push = {
                     "date": dt.strftime("%Y-%m-%dT00:00:00Z"),
                     "pred": list(preds),
-                    "s": self.pl_config["pushId"],
+                    "s": self.pl_config["pushId"]+ rnt_tag,
                     "p": float(self.pl_config["horizon"]) * float(self.pl_config["granularity"]),
                 }
             except KeyError as e:
@@ -691,7 +691,7 @@ class MLBlender(object):
 
             self.api_handler.push_update(push_dict=dict_to_push)
 
-    def run_update_dashboard(self, coll=None, push_key='real', db_uri=None, db_name=None, field_day=None, field_value=None, freq=None):
+    def run_update_dashboard(self, coll=None, push_key='real', db_uri=None, db_name=None, field_day=None, field_value=None, freq=None, rnt_tag=''):
 
         if self.api_handler.url is None or self.api_handler.host is None:
             msg = 'You have to set both URL and HOST on the api_handler'
@@ -730,7 +730,7 @@ class MLBlender(object):
                 dict_to_push = {
                     "date": day.strftime("%Y-%m-%dT00:00:00Z"),
                     push_key: df_day['v'].tolist(),
-                    "s": self.pl_config["pushId"],
+                    "s": self.pl_config["pushId"] + rnt_tag,
                     "p": float(self.pl_config["horizon"]) * float(self.pl_config["granularity"]),
                 }
             except KeyError as e:
