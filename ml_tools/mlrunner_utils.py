@@ -166,8 +166,23 @@ def is_daysoff(db, pl_config, date_start, date_end, freq='1H'):
     df = pd.DataFrame(index=datetimes, columns=['is_daysoff'])
 
     for do in daysoff:
+
         do_date = do['day']
         df.loc[do_date: do_date + timedelta(days=1) - timedelta(minutes=1), 'is_daysoff'] = 1
-    df.fillna(0)
+        try:
+            df.loc[do_date: do_date + timedelta(days=1) - timedelta(minutes=1), 'daysoff_desc'] = '_'.join(do['desc'].encode('utf-8').split())
+        except KeyError:
+            df.loc[do_date: do_date + timedelta(days=1) - timedelta(minutes=1), 'daysoff_desc'] = 'unknown'
+        try:
+            df.loc[do_date: do_date + timedelta(days=1) - timedelta(minutes=1), 'daysoff_cat'] = do['cat']
+        except KeyError:
+            df.loc[do_date: do_date + timedelta(days=1) - timedelta(minutes=1), 'daysoff_cat'] = -1
+    df['is_daysoff'] = df['is_daysoff'].fillna(0)
+    df['daysoff_desc'] = df['daysoff_desc'].fillna('work')
+    df['daysoff_cat'] = df['daysoff_cat'].fillna(-2)
+    df = pd.concat([df, pd.get_dummies(df['daysoff_desc'], prefix='is')], axis=1)
+    df = df.drop('daysoff_desc', axis=1)
+    df = pd.concat([df, pd.get_dummies(df['daysoff_cat'], prefix='is_cat')], axis=1)
+    df = df.drop('daysoff_cat', axis=1)
 
     return df.copy()
