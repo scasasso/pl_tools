@@ -1,4 +1,5 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
 import logging
 import json
 import pandas as pd
@@ -150,23 +151,25 @@ def is_daysoff(db, pl_config, date_start, date_end, freq='1H'):
 
     logger.info('Adding daysoff')
 
+    # Date range
+    dt_start_incl = datetime(2005, 1, 1)
+    dt_end_incl = datetime(datetime.now().year, 12, 31)
+
     # Collections
     coll_daysoff = db['daysoff']
 
-    # Query
-    q = {"$and": [{'day': {"$gte": date_start}},
-                  {'day': {"$lte": date_end}},
+    q = {"$and": [{'day': {"$gte": dt_start_incl}},
+                  {'day': {"$lte": dt_end_incl}},
                   {'country': pl_config['country']}
                   ]
          }
 
     daysoff = [row for row in coll_daysoff.find(q)]
 
-    datetimes = pd.date_range(date_start, date_end + timedelta(hours=23) + timedelta(minutes=59), freq=freq)
-    df = pd.DataFrame(index=datetimes, columns=['is_daysoff'])
+    datetimes = pd.date_range(dt_start_incl, dt_end_incl + timedelta(hours=23) + timedelta(minutes=59), freq=freq)
+    df = pd.DataFrame(index=datetimes)
 
     for do in daysoff:
-
         do_date = do['day']
         df.loc[do_date: do_date + timedelta(days=1) - timedelta(minutes=1), 'is_daysoff'] = 1
         try:
@@ -185,4 +188,4 @@ def is_daysoff(db, pl_config, date_start, date_end, freq='1H'):
     df = pd.concat([df, pd.get_dummies(df['daysoff_cat'], prefix='is_daysoff_cat')], axis=1)
     df = df.drop('daysoff_cat', axis=1)
 
-    return df.copy()
+    return df[date_start: date_end].copy()
