@@ -180,9 +180,9 @@ def is_daysoff(db, pl_config, date_start, date_end, freq='1H'):
     df['is_daysoff'] = df['is_daysoff'].fillna(0)
     df['daysoff_desc'] = df['daysoff_desc'].fillna('work')
     df['daysoff_cat'] = df['daysoff_cat'].fillna(-2)
-    df = pd.concat([df, pd.get_dummies(df['daysoff_desc'], prefix='is')], axis=1)
+    df = pd.concat([df, pd.get_dummies(df['daysoff_desc'], prefix='is_daysoff')], axis=1)
     df = df.drop('daysoff_desc', axis=1)
-    df = pd.concat([df, pd.get_dummies(df['daysoff_cat'], prefix='is_cat')], axis=1)
+    df = pd.concat([df, pd.get_dummies(df['daysoff_cat'], prefix='is_daysoff_cat')], axis=1)
     df = df.drop('daysoff_cat', axis=1)
 
     return df.copy()
