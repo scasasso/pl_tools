@@ -371,7 +371,7 @@ class MLRunner(object):
         if blind is False:
             self.df_feat['target'] = self.target_builder(self.df_feat, self.df_coll)
 
-            # Sanity check
+        # Sanity check
         if self.df_feat.loc[self.pl_config['load_start_dt']:, :].dropna().index[0].to_pydatetime() != self.pl_config[
             'load_start_dt'] and raise_on_missing is True:
             logger.debug(self.df_feat.loc[self.pl_config['load_start_dt']:, :].dropna().index[0].to_pydatetime(),
