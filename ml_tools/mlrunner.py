@@ -70,7 +70,7 @@ class MLRunner(object):
         self.reset_target('{orig}_minus_{subt}'.format(orig=self.pl_config['target'], subt=S), 'target_minus_feature',
                           _target_builder, _preds_builder)
 
-    def run_build(self, rebuild_data=True, save=True):
+    def run_build(self, rebuild_data=True, save=True, rnt_tag=''):
         if rebuild_data is True:
             data_structure = self.build_data_structure(blind=False, raise_on_missing=False)
             data_structure_train = build_data_structure_train(data_structure)
@@ -84,7 +84,7 @@ class MLRunner(object):
         self._fit_models(data_structure_train)
 
         if save:
-            self._save_models()
+            self._save_models(rnt_tag=rnt_tag)
 
         return
 
@@ -95,7 +95,7 @@ class MLRunner(object):
         n_preds = len(data_structure[dt_start: dt_end])
         data_structure_test = build_data_structure_test(data_structure)
 
-        self.models = load_models(self.model_filepath)
+        self.models = load_models(self.model_filepath + rnt_tag)
 
         predictions = self._score_models(data_structure_test)
         predictions = self.preds_builder(predictions, self.df_feat, self.df_coll)
@@ -443,10 +443,10 @@ class MLRunner(object):
         logger.info('Model prediction: end')
         return predictions
 
-    def _save_models(self):
+    def _save_models(self, rnt_tag=''):
         logger.info('Save model: start')
 
-        model_filepath = self.model_filepath
+        model_filepath = self.model_filepath + rnt_tag
         global_json = {'models_filepath': [],
                        'models_type': [],
                        'models_class': [],
