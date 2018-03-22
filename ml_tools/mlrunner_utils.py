@@ -68,7 +68,7 @@ def weather_function(db, weather_config, date_start, date_end, freq='1H'):
             if city in city_country:
                 real_country = city_country[city]
 
-        print 'Looking for city: %s in country: %s' % (city, real_country)
+        logger.info('Looking for city: %s in country: %s' % (city, real_country))
         id_city = coll_town.find_one({"country": real_country, "town": city})["_id"]
 
         q = {"$and": [{'date': {"$gte": date_start_safe}},
@@ -173,7 +173,7 @@ def is_daysoff(db, pl_config, date_start, date_end, freq='1H'):
         do_date = do['day']
         df.loc[do_date: do_date + timedelta(days=1) - timedelta(minutes=1), 'is_daysoff'] = 1
         try:
-            df.loc[do_date: do_date + timedelta(days=1) - timedelta(minutes=1), 'daysoff_desc'] = '_'.join(do['desc'].encode('utf-8').split())
+            df.loc[do_date: do_date + timedelta(days=1) - timedelta(minutes=1), 'daysoff_desc'] = '_'.join(do['desc'].encode('utf-8').decode('unicode_escape').encode('ascii', 'ignore').split())
         except KeyError:
             df.loc[do_date: do_date + timedelta(days=1) - timedelta(minutes=1), 'daysoff_desc'] = 'unknown'
         try:
@@ -183,6 +183,7 @@ def is_daysoff(db, pl_config, date_start, date_end, freq='1H'):
     df['is_daysoff'] = df['is_daysoff'].fillna(0)
     df['daysoff_desc'] = df['daysoff_desc'].fillna('work')
     df['daysoff_cat'] = df['daysoff_cat'].fillna(-2)
+
     df = pd.concat([df, pd.get_dummies(df['daysoff_desc'], prefix='is_daysoff')], axis=1)
     df = df.drop('daysoff_desc', axis=1)
     df = pd.concat([df, pd.get_dummies(df['daysoff_cat'], prefix='is_daysoff_cat')], axis=1)
