@@ -30,5 +30,5 @@ class XGBModel(PLModel):
         PLModel.__init__(self, model, scaler)
         return
 
-    def _fit_and_eval(self, X_train_val, y_train_val):
-        return self.model.fit_and_eval(X_train_val, y_train_val)
+    def _fit_and_eval(self, X_train_val, y_train_val, **kwargs):
+        return self.model.fit_and_eval(X_train_val, y_train_val, **kwargs)
