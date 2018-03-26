@@ -127,7 +127,6 @@ def write_daily_ts(db, coll_name, df, date_field='day', value_field='v', dfcol=N
             for k, v in add_query.iteritems():
                 query[k] = v
 
-
         # Write to DB
         db[coll_name].update(query, {'$set': out_dict}, upsert=True)
         
