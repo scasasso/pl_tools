@@ -20,12 +20,16 @@
 ################################################################################
 import os
 import json
+import logging
 import numpy
 from pydoc import locate
 from ml_tools.ml_utils import NotFittedError, clone_clf, clone_scaler, DefaultScaler
 from sklearn.externals import joblib
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.base import clone as skclone
+
+logger = logging.getLogger(__file__)
+
 
 class PLModel:
     def __init__(self, model=None, scaler='default'):
@@ -59,8 +63,16 @@ class PLModel:
 
         return self.model.fit(X_train, y_train)
 
-    def fit_and_eval(self, X_train, y_train):
-        return self.fit(X_train, y_train)
+    # This should be implemented separately in each case
+    def _fit_and_eval(self, X_train_val, y_train_val, **kwargs):
+        if self._is_scaler_fitted is False:
+            self.fit_scaler(X_train_val)
+
+        return self.fit(X_train_val, y_train_val)
+
+    def fit_and_eval(self, X_train_val, y_train_val, **kwargs):
+
+        return self._fit_and_eval(X_train_val, y_train_val, **kwargs)
 
     def predict(self, X_test):
         X_test = self.scaler.transform(X_test)

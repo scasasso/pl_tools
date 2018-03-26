@@ -280,7 +280,7 @@ class KerasModel(PLModel):
         
         return
 
-    def fit_and_eval(self, X_train, y_train, f_val=0.1, early_stop=True, min_delta=0.1, use_best=True):
+    def _fit_and_eval(self, X_train, y_train, f_val=0.1, early_stop=True, min_delta=0.1, use_best=True):
         # Scale
         try:
             X_train_ = self.scaler.transform(X_train)
