@@ -13,7 +13,7 @@ from sklearn.externals import six
 from sklearn.utils.validation  import NotFittedError
 from sklearn.utils.metaestimators import if_delegate_has_method
 
-from ml_clf.xgbmodel import XGBoost
+from ml_clf.xgboost_wrapper import XGBoost
 
 import keras.backend as K
 
