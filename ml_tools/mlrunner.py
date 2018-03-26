@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 
 from sklearn.cross_validation import KFold
+from sklearn.grid_search import GridSearchCV
 
 from mlrunner_utils import *
 from ml_utils import *
@@ -70,7 +71,7 @@ class MLRunner(object):
         self.reset_target('{orig}_minus_{subt}'.format(orig=self.pl_config['target'], subt=S), 'target_minus_feature',
                           _target_builder, _preds_builder)
 
-    def run_build(self, rebuild_data=True, save=True, rnt_tag=''):
+    def run_build(self, rebuild_data=True, save=True, eval=False, rnt_tag='', grid_opt=False):
         if rebuild_data is True:
             data_structure = self.build_data_structure(blind=False, raise_on_missing=False)
             data_structure_train = build_data_structure_train(data_structure)
@@ -81,7 +82,7 @@ class MLRunner(object):
             logger.critical(msg)
             raise AttributeError(msg)
 
-        self._fit_models(data_structure_train)
+        self._fit_models(data_structure_train, eval=eval, grid_opt=grid_opt)
 
         if save:
             self._save_models(rnt_tag=rnt_tag)
@@ -268,7 +269,7 @@ class MLRunner(object):
 
             if 'weather' in external['table'] or 'daysoff' in external['table']:
                 func = getattr(mlrunner_utils, external['indicators'][0])
-                df_tmp = func(db, self.pl_config, dt_start, dt_end, freq)
+                df_tmp = func(db, self.pl_config, dt_start, dt_end, freq, params=external.get('params', {}))
             else:
                 df_tmp = get_daily_ts(db, external['table'], dt_start, dt_end + timedelta(hours=23) + timedelta(minutes=59),
                                       date_field=params['datetime_key'], value_field=params['fields'][0],
@@ -363,7 +364,7 @@ class MLRunner(object):
             else:
                 raise NotImplementedError('Feature %s is not implemented yet' % cfeat)
 
-        # Daysoff
+        # Daysoff - fill NaNs
         for col in [c for c in self.df_coll.columns if 'daysoff' in c]:
             self.df_feat[col] = self.df_coll.loc[self.df_feat.index, col].fillna(0)
 
@@ -406,19 +407,34 @@ class MLRunner(object):
 
         return self.df_feat.copy()
 
-    def _fit_models(self, data_structure_train):
+    def _fit_models(self, data_structure_train, eval=False, grid_opt=False):
         # Some logs
         logger.info('Learning on : %s instances' % len(data_structure_train[0]))
 
+        # If optimisation is run
         for index, model in enumerate(self.models):
             logger.info('Learning models: %s %s' % (round(float(index) / len(self.models), 2) * 100, '%'))
-            if 'Keras' in model.__class__.__name__:
-                min_delta = 0.01 if ('ratio' not in self.target and 'div' not in self.target) else 0.0001
-                model.fit_and_eval(data_structure_train[0], data_structure_train[1], min_delta=min_delta)
-            elif 'XGBModel' in model.__class__.__name__:
-                model.fit_and_eval(data_structure_train[0], data_structure_train[1])
+            if grid_opt is True and self.pl_config.get('classifiers_grid', None) is not None:
+                raise NotImplementedError('THis feature is not yet implemented')
+                # grid_params = self.pl_config['classifiers_grid'][index]
+                # grid_obj = GridSearchCV(estimator=model,
+                #                         param_grid=grid_params,
+                #                         scoring='roc_auc' if self.pl_config['learning_type'] == 'classification' else 'mean_squared_error',
+                #                         n_jobs=8, cv=3, refit=True, verbose=2)
+                # grid_obj.fit(data_structure_train[0], data_structure_train[1])
+                #
+                # # Replace
+                # self.models[index] = grid_obj.best_estimator_
             else:
-                model.fit(data_structure_train[0], data_structure_train[1])
+                if 'Keras' in model.__class__.__name__:
+                    min_delta = 0.01 if ('ratio' not in self.target and 'div' not in self.target) else 0.0001
+                    model.fit_and_eval(data_structure_train[0], data_structure_train[1], min_delta=min_delta)
+                else:
+                    if eval is True:
+                        logger.debug('Will run evaluation before final fit')
+                        model.fit_and_eval(data_structure_train[0], data_structure_train[1])
+                    else:
+                        model.fit(data_structure_train[0], data_structure_train[1])
         logger.info('Learning models: %s %s' % (100, '%'))
 
     def _reset_models(self):
@@ -487,7 +503,7 @@ class MLRunner(object):
         # Put into DB
         for dt, preds in zip(datetimes, grouped_preds):
             query = {field_day: dt}
-            preds_day = {field_value: list(preds)}
+            preds_day = {field_value: list(preds.astype(float))}
             collection.update(query, {'$set': preds_day}, upsert=True)
 
         return
@@ -569,13 +585,13 @@ class MLBlender(object):
             logger.critical(msg)
             raise ValueError(msg)
 
-    def _get_data(self, blind=True):
+    def _get_data(self, blind=True, rnt_tag=''):
         # Get the predictions from models in the list
         dfs_pred = []
         for model in self.models:
             # Model prediction data
             client_model = MongoClient(model['db_uri'])
-            df_model = get_daily_ts(client_model[model['db_name']], model['table'],
+            df_model = get_daily_ts(client_model[model['db_name']], model['table'] + rnt_tag,
                                     self.pl_config['load_start_dt'],
                                     self.pl_config['load_end_dt'] + timedelta(hours=23) + timedelta(minutes=59),
                                     date_field=model['field_day'], value_field=model['field_value'],
@@ -613,7 +629,7 @@ class MLBlender(object):
         db = client[self.pl_config['db_name_running']]
         collection = self.pl_config['production_table'] + rnt_tag
 
-        self._get_data()
+        self._get_data(rnt_tag=rnt_tag)
 
         if write:
             write_daily_ts(db, collection, self.df_preds['blend'],
@@ -621,9 +637,9 @@ class MLBlender(object):
 
         return self.df_preds['blend'].copy()
 
-    def run_validation(self, validation_type='cross_val', n_splits=5):
+    def run_validation(self, validation_type='cross_val', n_splits=5, rnt_tag=''):
         # We don't have to build the data and the models, just take the preds from database
-        self._get_data(blind=False)
+        self._get_data(blind=False, rnt_tag=rnt_tag)
 
         # This is jut because of the (stupid) design of TimeSeriesSplit...
         cols = [c for c in self.df_preds.columns if c not in ['blend', 'target']]
@@ -681,7 +697,7 @@ class MLBlender(object):
                 dict_to_push = {
                     "date": dt.strftime("%Y-%m-%dT00:00:00Z"),
                     "pred": list(preds),
-                    "s": self.pl_config["pushId"]+ rnt_tag,
+                    "s": self.pl_config["pushId"] + rnt_tag,
                     "p": float(self.pl_config["horizon"]) * float(self.pl_config["granularity"]),
                 }
             except KeyError as e:
