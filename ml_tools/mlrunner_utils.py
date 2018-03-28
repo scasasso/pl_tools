@@ -125,10 +125,12 @@ def weather_forecast_function(db, weather_config, date_start, date_end, freq='1H
         collection_rows = []
 
         for row in res_frcst:
-            if not row["date"] + timedelta(days=1) in dates:
-                dates.append(row["date"] + timedelta(days=1))
+            date_ops_d1 = row["date"] + timedelta(days=1)
+            # if date_ops_d1 not in dates and (date_start_safe <= date_ops_d1 <= date_end):
+            if date_ops_d1 not in dates:
+                dates.append(date_ops_d1)
                 row = {
-                    "date": row["date"] + timedelta(days=1),
+                    "date": date_ops_d1,
                     "temp": row["h1"]["temp"],
                     "wind": row["h1"]["wind"],
                     "cloud": row["h1"]["cloud"],
@@ -138,11 +140,13 @@ def weather_forecast_function(db, weather_config, date_start, date_end, freq='1H
                 }
                 collection_rows.append(row)
         for row in res_frcst:
-            if not row["date"] + timedelta(days=2) in dates:
+            date_ops_d2 = row["date"] + timedelta(days=2)
+            # if date_ops_d2 not in dates and (date_start_safe <= date_ops_d2 <= date_end):
+            if date_ops_d2 not in dates:
                 if row.get("h2", None):
-                    dates.append(row["date"] + timedelta(days=2))
+                    dates.append(date_ops_d2)
                     row = {
-                        "date": row["date"] + timedelta(days=2),
+                        "date": date_ops_d2,
                         "temp": row["h2"]["temp"],
                         "wind": row["h2"]["wind"],
                         "cloud": row["h2"]["cloud"],
@@ -153,20 +157,29 @@ def weather_forecast_function(db, weather_config, date_start, date_end, freq='1H
                     collection_rows.append(row)
 
         for row in sorted([entry for entry in coll_weather.find(q)], key=lambda x: x["date"]):
-            if row["date"] not in dates and date_start_safe <= row['date'] <= date_end:
-                dates.append(row["date"])
+            date_ops = row['date']
+            if date_ops not in dates and date_start_safe <= date_ops <= date_end:
+                dates.append(date_ops)
                 collection_rows.append(row)
 
         dates = sorted(dates)
         collection_rows = sorted(collection_rows, key=lambda x: x["date"])
         datetimes = pd.date_range(dates[0], dates[-1] + timedelta(hours=23) + timedelta(minutes=59), freq='1H')
 
+        # Sanity checks
+        dates_all = [datetime(dd.year, dd.month, dd.day) for dd in list(set([d.date() for d in datetimes]))]
+        if len(dates) != len(dates_all):
+            missing = list(set(dates_all) - set(dates))
+            msg = 'Not all the dates have been retrieve: %s vs %s expected. ' \
+                  'Missing:\n%s' % (len(dates), len(dates_all), missing)
+            logger.error(msg)
+            raise ValueError(msg)
+
         if len(dates) != len(collection_rows):
             raise ValueError('Something is wrong with the weather signals: {0} {1}'.format(len(dates), len(collection_rows)))
 
         # Initialization
         rows = {v: [] for v in weather_vars}
-
         for wrow in collection_rows:
             for var in ['temp', 'wind', 'cloud', 'sky']:
                 l = list(np.lib.pad(wrow[var], (0, max(24 - len(wrow[var]), 0)), 'constant', constant_values=wrow[var][-1]))[:24]
@@ -200,14 +213,20 @@ def weather_forecast_function(db, weather_config, date_start, date_end, freq='1H
         df['agg_temp_frcst'] = df[[c for c in df.columns if c.endswith('_temp_frcst')]].mean(axis=1)
         df['agg_wind_frcst'] = df[[c for c in df.columns if c.endswith('_wind_frcst')]].mean(axis=1)
         df['agg_cloud_frcst'] = df[[c for c in df.columns if c.endswith('_cloud_frcst')]].mean(axis=1)
+        df['agg_sky_frcst'] = df[[c for c in df.columns if c.endswith('_sky_frcst')]].mean(axis=1)
+        df['agg_sunrise_frcst'] = df[[c for c in df.columns if c.endswith('_sunrise_frcst')]].mean(axis=1)
+        df['agg_sunset_frcst'] = df[[c for c in df.columns if c.endswith('_sunset_frcst')]].mean(axis=1)
 
         df['month_of_year'] = df.index.month
         df_agg_agg = pd.concat(df_aggs, axis=1)
         df_agg_agg['agg_temp_avg1M'] = df_agg_agg[[c for c in df_agg_agg.columns if '_temp_avg1M' in c]].mean(axis=1)
         df_agg_agg['agg_wind_avg1M'] = df_agg_agg[[c for c in df_agg_agg.columns if '_wind_avg1M' in c]].mean(axis=1)
         df_agg_agg['agg_cloud_avg1M'] = df_agg_agg[[c for c in df_agg_agg.columns if '_cloud_avg1M' in c]].mean(axis=1)
+        df_agg_agg['agg_sky_avg1M'] = df_agg_agg[[c for c in df_agg_agg.columns if '_sky_avg1M' in c]].mean(axis=1)
+        df_agg_agg['agg_sunrise_avg1M'] = df_agg_agg[[c for c in df_agg_agg.columns if '_sunrise_avg1M' in c]].mean(axis=1)
+        df_agg_agg['agg_sunset_avg1M'] = df_agg_agg[[c for c in df_agg_agg.columns if '_sunset_avg1M' in c]].mean(axis=1)
         for m, row in df_agg_agg.iterrows():
-            for c in ['temp', 'wind', 'cloud']:
+            for c in ['temp', 'wind', 'cloud', 'sky', 'sunrise', 'sunset']:
                 df.loc[df['month_of_year'] == m, 'agg_' + c + '_frcst_diff_month_avg'] = \
                     df.loc[df['month_of_year'] == m, 'agg_' + c + '_frcst'] - row['agg_' + c + '_avg1M']
                 df.loc[df['month_of_year'] == m, 'agg_' + c + '_frcst_on_month_avg'] = \

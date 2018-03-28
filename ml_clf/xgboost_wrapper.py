@@ -81,12 +81,14 @@ class XGBoost:
         if self.eval_set is not None:
             eval_list.append((self.eval_set, 'validation'))
         self.model = xgb.train(plst, dtrain, self.n_estimators, evals=eval_list)
-        self.feature_importances_ = [0] * len(X_train[0])
-        for key, value in self.model.get_fscore().iteritems():
-            self.feature_importances_[int(key.split("f")[-1])] = float(value)
-        sum_importance = sum(self.feature_importances_)
-        if self.param["booster"] != "gblinear":
-            self.feature_importances_ = [value / sum_importance for value in self.feature_importances_]
+        self._set_feature_importances(X_train.shape[1])
+        # self.feature_importances_ = [0] * len(X_train[0])
+        # for key, value in self.model.get_fscore().iteritems():
+        #     self.feature_importances_[int(key.split("f")[-1])] = float(value)
+        # sum_importance = sum(self.feature_importances_)
+        # if self.param["booster"] != "gblinear":
+        #     self.feature_importances_ = [value / sum_importance for value in self.feature_importances_]
+
         return
 
     def fit_and_eval(self, X_train_val, y_train_val):
@@ -111,13 +113,15 @@ class XGBoost:
                 plst.append(("eval_metric", eval_metric))
         eval_list = [(dtrain, "train"), (dval, "val")]
         self.model = xgb.train(plst, dtrain, self.n_estimators, evals=eval_list)
-        self.feature_importances_ = [0] * len(X_train[0])
-        for key, value in self.model.get_fscore().iteritems():
-            self.feature_importances_[int(key.split("f")[-1])] = float(value)
-        sum_importance = sum(self.feature_importances_)
-        if self.param["booster"] != "gblinear":
-            self.feature_importances_ = [value / sum_importance for value in self.feature_importances_]
-        self.fit(X_train_val, y_train_val)
+        self._set_feature_importances(X_train_val.shape[1])
+        # self.feature_importances_ = [0] * len(X_train[0])
+        # for key, value in self.model.get_fscore().iteritems():
+        #     self.feature_importances_[int(key.split("f")[-1])] = float(value)
+        # sum_importance = sum(self.feature_importances_)
+        # if self.param["booster"] != "gblinear":
+        #     self.feature_importances_ = [value / sum_importance for value in self.feature_importances_]
+        # self.fit(X_train_val, y_train_val)
+
         return
 
     def predict(self, X_test):
@@ -139,3 +143,16 @@ class XGBoost:
         else:
             predictions = np.array([np.array([1 - predicted_value, predicted_value]) for predicted_value in self.model.predict(dtest)])
         return predictions
+
+    def _set_feature_importances(self, n_feat):
+
+        # n_feat = len(self.model.get_fscore().keys())
+
+        sum_importance = sum([v for _, v in self.model.get_fscore().iteritems()])
+        self.feature_importances_ = [0.] * n_feat
+        for i, (key, value) in enumerate(self.model.get_fscore().iteritems()):
+            index = int(key.split("f")[-1])
+            self.feature_importances_[index] = float(value) / sum_importance
+
+        return
+

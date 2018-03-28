@@ -82,7 +82,12 @@ class MLRunner(object):
             logger.critical(msg)
             raise AttributeError(msg)
 
+        # Fit the models
         self._fit_models(data_structure_train, eval=eval, grid_opt=grid_opt)
+
+        # Feature importance
+        feature_names = [f for f in self.df_feat.columns if 'target' not in f]
+        self._fill_feature_importance(feature_names)
 
         if save:
             self._save_models(rnt_tag=rnt_tag)
@@ -244,10 +249,10 @@ class MLRunner(object):
             self.api_handler.push_update(push_dict=dict_to_push)
 
     def build_data_structure(self, blind=False, raise_on_missing=False):
+        ref_list = self.pl_config.get('reference', [])
         lats = np.array(
             [fe.get('latency', 0) for fe in self.pl_config['fields'] if not pd.isnull(fe.get('latency', None))] + [
-                self.pl_config['latency']] + self.pl_config[
-                'reference'])
+                self.pl_config['latency']] + ref_list)
         max_lat = np.max(lats)
 
         dt_start = self.pl_config['load_start_dt'] - timedelta(
@@ -308,26 +313,42 @@ class MLRunner(object):
                     fname = '_'.join([field_name, feat.lower()])
                     self.df_feat[fname] = self.df_coll[field_name].shift(field['latency'])
                 elif feat == 'Average':
-                    for win in self.pl_config['average']:
+                    avg_list = self.pl_config.get('average', [])
+                    if len(avg_list) == 0:
+                        logger.warning('You call to Average but didn\'t set the \'average\' field')
+                    for win in avg_list:
                         fname = '_'.join([field_name, feat.lower(), str(win)])
                         self.df_feat[fname] = self.df_feat[field_name + '_laggedvalue'].rolling(win,
                                                                                                 min_periods=1).mean()
                 elif feat == 'ExpAverage':
-                    for win in self.pl_config['exp_average']:
+                    expavg_list = self.pl_config.get('exp_average', [])
+                    if len(expavg_list) == 0:
+                        logger.warning('You call to ExpAverage but didn\'t set the \'exp_average\' field')
+                    for win in expavg_list:
                         fname = '_'.join([field_name, feat.lower(), str(win)])
                         self.df_feat[fname] = self.df_feat[field_name + '_laggedvalue'].ewm(span=win,
                                                                                             min_periods=1).mean()
                 elif feat == 'Reference':
-                    for lat in [v for v in list(set(self.pl_config['reference'])) if v > field['latency']]:
+                    ref_list = self.pl_config.get('reference', [])
+                    if len(ref_list) == 0:
+                        logger.warning('You call to Reference but didn\'t set the \'reference\' field')
+                    for lat in [v for v in list(set(ref_list)) if v > field['latency']]:
                         fname = '_'.join([field_name, feat.lower(), str(lat)])
                         self.df_feat[fname] = self.df_coll[field_name].shift(lat)
                 elif feat == 'EvolutionDifference':
-                    for diff in self.pl_config['evolution_difference']:
+                    evodiff_list = self.pl_config.get('evolution_difference', [])
+                    if len(evodiff_list) == 0:
+                        logger.warning('You call to EvolutionDifference but didn\'t set the \'evolution_difference\' field')
+                    for diff in evodiff_list:
                         fname = '_'.join([field_name, feat.lower(), str(diff)])
                         self.df_feat[fname] = self.df_feat[field_name + '_laggedvalue'] - self.df_feat[
                             field_name + '_laggedvalue'].shift(diff)
                 elif feat == 'Evolution':
-                    for diff in self.pl_config['evolution']:
+                    evo_list = self.pl_config.get('evolution', [])
+                    if len(evo_list) == 0:
+                        logger.warning(
+                            'You call to Evolution but didn\'t set the \'evolution\' field')
+                    for diff in evo_list:
                         fname = '_'.join([field_name, feat.lower(), str(diff)])
                         try:
                             self.df_feat[field_name + '_laggedvalue'] = self.df_feat[field_name + '_laggedvalue']
@@ -336,12 +357,20 @@ class MLRunner(object):
                         except ZeroDivisionError:
                             self.df_feat[fname] = -1
                 elif feat == 'MaxPast':
-                    for win in self.pl_config['max_past']:
+                    maxpast_list = self.pl_config.get('max_past', [])
+                    if len(maxpast_list) == 0:
+                        logger.warning(
+                            'You call to MaxPast but didn\'t set the \'max_past\' field')
+                    for win in maxpast_list:
                         fname = '_'.join([field_name, feat.lower(), str(win)])
                         self.df_feat[fname] = self.df_feat[field_name + '_laggedvalue'].rolling(win,
                                                                                                 min_periods=1).max()
                 elif feat == 'MinPast':
-                    for win in self.pl_config['min_past']:
+                    minpast_list = self.pl_config.get('min_past', [])
+                    if len(minpast_list) == 0:
+                        logger.warning(
+                            'You call to MinPast but didn\'t set the \'min_past\' field')
+                    for win in minpast_list:
                         fname = '_'.join([field_name, feat.lower(), str(win)])
                         self.df_feat[fname] = self.df_feat[field_name + '_laggedvalue'].rolling(win,
                                                                                                 min_periods=1).min()
@@ -415,7 +444,7 @@ class MLRunner(object):
         for index, model in enumerate(self.models):
             logger.info('Learning models: %s %s' % (round(float(index) / len(self.models), 2) * 100, '%'))
             if grid_opt is True and self.pl_config.get('classifiers_grid', None) is not None:
-                raise NotImplementedError('THis feature is not yet implemented')
+                raise NotImplementedError('This feature is not yet implemented')
                 # grid_params = self.pl_config['classifiers_grid'][index]
                 # grid_obj = GridSearchCV(estimator=model,
                 #                         param_grid=grid_params,
@@ -467,7 +496,8 @@ class MLRunner(object):
                        'models_type': [],
                        'models_class': [],
                        'models_scaler': [],
-                       'models_teacher': []}
+                       'models_teacher': [],
+                       'models_feature_importances': []}
         for index, model in enumerate(self.models):
             global_json['models_filepath'].append('%s_%s' % (model_filepath, index))
             global_json['models_type'].append(self.target_type)
@@ -485,6 +515,7 @@ class MLRunner(object):
             else:
                 global_json['models_teacher'].append(None)
 
+            global_json['models_feature_importances'].append(model.feature_importances_)
             model.save_model('%s_%s' % (model_filepath, index))
 
         fw = open(model_filepath, 'w')
@@ -505,6 +536,13 @@ class MLRunner(object):
             query = {field_day: dt}
             preds_day = {field_value: list(preds.astype(float))}
             collection.update(query, {'$set': preds_day}, upsert=True)
+
+        return
+
+    def _fill_feature_importance(self, names):
+        logger.info('Setting feature importance')
+        for model in self.models:
+            model.set_feature_importances(names)
 
         return
 

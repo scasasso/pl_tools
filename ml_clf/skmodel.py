@@ -37,7 +37,7 @@ class SKModel(PLModel):
         PLModel.__init__(self, model, scaler)
         return
 
-    def _fit_and_eval(self, X_train_val, y_train_val):
+    def _fit_and_eval(self, X_train_val, y_train_val, **kwargs):
 
         # Split train/validation dataset
         i_val = int(np.floor(0.8 * len(X_train_val)))

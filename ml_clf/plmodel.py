@@ -38,6 +38,7 @@ class PLModel:
         self.scaler = scaler
         self._is_scaler_fitted = False
         self.class_obj = self.model.__class__
+        self.feature_importances_ = None
         
     def set_model(self, model):
         self.model = model
@@ -61,18 +62,30 @@ class PLModel:
             self.fit_scaler(X_train)
         X_train = self.scaler.transform(X_train)
 
-        return self.model.fit(X_train, y_train)
+        # Fit
+        self.model.fit(X_train, y_train)
+        self._is_model_fitted = True
+
+        return
 
     # This should be implemented separately in each case
     def _fit_and_eval(self, X_train_val, y_train_val, **kwargs):
         if self._is_scaler_fitted is False:
             self.fit_scaler(X_train_val)
 
-        return self.fit(X_train_val, y_train_val)
+        # Fit
+        self.fit(X_train_val, y_train_val)
+        self._is_model_fitted = True
+
+        return
 
     def fit_and_eval(self, X_train_val, y_train_val, **kwargs):
 
-        return self._fit_and_eval(X_train_val, y_train_val, **kwargs)
+        # Fit
+        self._fit_and_eval(X_train_val, y_train_val, **kwargs)
+        self._is_model_fitted = True
+
+        return
 
     def predict(self, X_test):
         X_test = self.scaler.transform(X_test)
@@ -88,6 +101,26 @@ class PLModel:
         if self.scaler not in [None, 'default']:
             joblib.dump(self.scaler, model_filepath + '_sc', compress=1)
         joblib.dump(self.model, model_filepath, compress=1)
+
+    def set_feature_importances(self, names, **kwargs):
+        # Sanity check
+        if self._is_model_fitted is not True:
+            msg = 'You must fit before setting feature importance'
+            logger.error(msg)
+            raise NotFittedError(msg)
+
+        try:
+            self.feature_importances_ = [(name, round(float(imp), 5)) for name, imp in zip(names, self.model.feature_importances_)]
+            # Sort
+            self.feature_importances_ = sorted(self.feature_importances_, key=lambda x: x[1], reverse=True)
+
+        except AttributeError as e:
+            msg = 'Classifier %s doesn\'t have a feature_importances_ attribute. Will set dummy values.' % self.model.__class__.__name__
+            logger.warning(msg)
+            default_imp = round(1. / len(names), 5)
+            self.feature_importances_ = [(name, default_imp) for name in names]
+
+        return
         
     @classmethod
     def load_model(cls, model_filepath):

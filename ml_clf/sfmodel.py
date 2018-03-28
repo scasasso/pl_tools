@@ -21,18 +21,17 @@
 ################################################################################
 import os
 import json
-import numpy
+import logging
+import numpy as np
 import pickle
-from skmodel import SKModel
 from plmodel import PLModel, clone_clf
 from sklearn.externals import joblib
-from sklearn.base import clone as skclone
 from sklearn.linear_model import LinearRegression, LassoCV, Lasso, ElasticNet
 from sklearn.ensemble import ExtraTreesRegressor
 from ml_tools.ml_utils import SelectFromModel, NotFittedError
-from sklearn.feature_selection import RFECV
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
-from kerasmodel import DefaultScaler
+
+
+logger = logging.getLogger(__file__)
 
 
 class SFModel(PLModel):
@@ -40,14 +39,14 @@ class SFModel(PLModel):
     def __init__(self, model, sfm=None, teacher=None, scaler='default', sfm_type='sfm', **sfm_args):
         PLModel.__init__(self, model=model, scaler=scaler)
 
-        if sfm_type not in ['sfm', 'rfecv']:
+        if sfm_type not in ['sfm']:
             raise NotImplementedError('Sfm type %s not supported' % sfm_type)
 
         if sfm is not None:
             if teacher is not None:
-                print 'Value for arguments teacher and threshold will be neglected, as sfm argument is specified'
+                logger.debug('Value for arguments teacher and threshold will be neglected, as sfm argument is specified')
             self.sfm = sfm
-            self.sfm_type = 'sfm' if 'SelectFromModel' in self.sfm.__class__.__name__ else 'rfecv'
+            self.sfm_type = 'sfm' if 'SelectFromModel' in self.sfm.__class__.__name__ else None
             self.teacher = self.sfm.estimator_
             self.sfm_args = dict()
         elif teacher is not None:
@@ -56,7 +55,7 @@ class SFModel(PLModel):
             self.sfm_type = sfm_type
             self.sfm_args = dict(threshold='0.2*mean') if self.sfm_type == 'sfm' else dict(step=10, cv=3, verbose=2)
         else:
-            print 'Teacher model has not been specified: will use linear regression default'
+            logger.info('Teacher model has not been specified: will use linear regression default')
             self.teacher = None
             self.sfm = None
             self.sfm_type = sfm_type
@@ -69,14 +68,13 @@ class SFModel(PLModel):
 
     def _extract_features(self, X_train, y_train=None):
 
-        print 'Extracting features from teacher model'
-        print 'Number of input features ', X_train.shape[1]
+        logger.info('Extracting features from teacher model')
+        logger.info('Number of input features %s' % X_train.shape[1])
 
         if self.teacher is None and self.sfm is None:
-            self.teacher = Lasso() if self.sfm_type == 'rfecv' else ElasticNet()
+            self.teacher = LinearRegression()  # typically LogisticRegression(), Lasso()
         if self.sfm is None:
-            self.sfm = RFECV(self.teacher, **self.sfm_args) if self.sfm_type == 'rfecv' \
-                else SelectFromModel(self.teacher, **self.sfm_args) 
+            self.sfm = SelectFromModel(self.teacher, **self.sfm_args)
 
         # Scale
         try:
@@ -95,18 +93,26 @@ class SFModel(PLModel):
                 msg = 'You are probably trying to call predict without fitting the teacher first:\n%s' % str(e)
                 raise NotFittedError(msg)
 
-        print 'Number of output features ', X_train_sel.shape[1]
+        logger.info('Number of output features %s' % X_train_sel.shape[1])
         return X_train_sel
 
-    def fit_and_eval(self, X_train, y_train):
+    def fit_and_eval(self, X_train, y_train, **kwargs):
         X_train_ = self._extract_features(X_train, y_train)
-        
-        return self.model.fit_and_eval(X_train_, y_train)
+
+        # Fit
+        self.model.fit_and_eval(X_train_, y_train)
+        self._is_model_fitted = True
+
+        return
 
     def fit(self, X_train, y_train):
         X_train_ = self._extract_features(X_train, y_train)
 
-        return self.model.fit(X_train_, y_train)
+        # Fit
+        self.model.fit(X_train_, y_train)
+        self._is_model_fitted = True
+
+        return
 
     def predict(self, X_test):
         X_test_ = self._extract_features(X_test)
@@ -123,6 +129,14 @@ class SFModel(PLModel):
         if self.scaler is not None:
             joblib.dump(self.scaler, model_filepath + '_sc', compress=1)
         PLModel.save_model(self, model_filepath)
+
+    def set_feature_importances(self, names, **kwargs):
+
+        # Get the support features and slice the list of names
+        indices = self.sfm.get_support(indices=True)
+
+        names_sfm = np.array(names)[indices].tolist()
+        PLModel.set_feature_importances(self, names_sfm, **kwargs)
 
     @classmethod
     def load_model(cls, model_filepath):

@@ -21,6 +21,7 @@
 ################################################################################
 import logging
 from plmodel import PLModel
+from ml_tools.ml_utils import NotFittedError
 
 logger = logging.getLogger(__file__)
 
@@ -31,4 +32,8 @@ class XGBModel(PLModel):
         return
 
     def _fit_and_eval(self, X_train_val, y_train_val, **kwargs):
-        return self.model.fit_and_eval(X_train_val, y_train_val, **kwargs)
+
+        # Fit and eval
+        self.model.fit_and_eval(X_train_val, y_train_val, **kwargs)
+
+        return
