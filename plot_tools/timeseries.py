@@ -83,9 +83,12 @@ def plot_ts_ply(x, y, title, ylab, out_dir='.', color='blue', filename=None, ann
                 family='Courier New, monospace',
                 size=18,
                 color='#7f7f7f'
-            )
+            ),
         ),
     )
+
+    if ylim is not None:
+        layout['yaxis']['range'] = list(ylim)
 
     data = []
     for ay, atitle, acolor in zip(y, title, color):
