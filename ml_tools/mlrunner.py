@@ -95,7 +95,7 @@ class MLRunner(object):
         return
 
     def run_predict(self, write=True, field_day='day', field_value='v', rnt_tag=''):
-        data_structure = self.build_data_structure(blind=True, raise_on_missing=False)
+        data_structure = self.build_data_structure(blind=True, raise_on_missing=True)
         dt_start = pd.Timestamp(self.pl_config['load_start_dt'])
         dt_end = pd.Timestamp(self.pl_config['load_end_dt']) + pd.Timedelta(hours=23) + pd.Timedelta(minutes=59)
         n_preds = len(data_structure[dt_start: dt_end])
@@ -258,7 +258,7 @@ class MLRunner(object):
         dt_start = self.pl_config['load_start_dt'] - timedelta(
             days=(max_lat * self.pl_config['granularity'] / (24 * 60 * 60))) - timedelta(
             days=60)
-        dt_end = self.pl_config['load_end_dt']
+        dt_end = self.pl_config['load_end_dt'] + timedelta(hours=23) + timedelta(minutes=59)
 
         dfs = []
         for external in self.pl_config['externals']:
@@ -555,9 +555,12 @@ class MLRunner(object):
         # Group the predictions in days
         grouped_preds = np.array_split(predictions, len(datetimes))
 
-        # Sanity check
+        # Sanity checks
         if len(grouped_preds) != len(datetimes):
             raise ValueError('Mismatch: got {0} dates and {1} predictions'.format(len(datetimes), len(grouped_preds)))
+        lenghts = list(set(map(len, grouped_preds)))
+        if not len(lenghts) == 1:
+            raise ValueError('Not all the days have the same number of predictions:\n%s' % lenghts)
 
         return datetimes, grouped_preds
 
