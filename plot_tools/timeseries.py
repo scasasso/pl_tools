@@ -5,21 +5,24 @@ import plotly.graph_objs as go
 import plotly
 
 
-COLOR_LIST_MPL = ['blue', 'orange', 'green', 'red', 'magenta', 'cyan', 'black']
+# COLOR_LIST_MPL = ['blue', 'orange', 'green', 'red', 'magenta', 'cyan', 'black']
+COLOR_LIST_MPL = ['#092e34', '#46c3b6', '#ffcc5c', '#949494', '#51d5e8', '#ff6f69', '#eddd6f']
 COLOR_LIST_PLY = ['#17BECF', '#7F7F7F', '#3CB371', '#F0E68C', '#F08080', '#85144b', '#FF851B']
 
 
-def plot_ts_mpl(x, y, title, ylab, out_dir='.', color='blue', filename=None, annotate=None, ylim=None):
+def plot_ts_mpl(x, y, title=None, ylab=None, out_dir='.', color='blue', filename=None, annotate=None, ylim=None):
 
     # Output file
-    if filename is None:
+    if filename is None and title is None:
+        raise ValueError('Do not know the name of the output file')
+    elif filename is None:
         filename = title
 
     # All the things to plot
     if not isinstance(y, list):
         y = [y]
     if not isinstance(color, list):
-        color = COLOR_LIST[:len(y)]
+        color = COLOR_LIST_MPL[:len(y)]
     if not isinstance(title, list):
         title = [title] * len(y)
 
@@ -28,7 +31,8 @@ def plot_ts_mpl(x, y, title, ylab, out_dir='.', color='blue', filename=None, ann
     ax = fig.add_subplot(111)
     for ay, col, tit in zip(y, color, title):
         plt.plot(x, ay, label=tit, color=col)
-    plt.ylabel(ylab)
+    if ylab is not None:
+        plt.ylabel(ylab)
     plt.legend(loc='upper left')
     fig.autofmt_xdate()
     if annotate is not None:
@@ -38,6 +42,7 @@ def plot_ts_mpl(x, y, title, ylab, out_dir='.', color='blue', filename=None, ann
             plt.text(0.02, 0.75 - 0.02 * max(0, len(annotate) - 1) - i * 0.05, txt, transform=ax.transAxes, color=col)
     if ylim is not None:
         plt.ylim(ylim)
+    plt.tight_layout()
     plt.savefig(os.path.join(out_dir, filename + '.png'))
 
 
