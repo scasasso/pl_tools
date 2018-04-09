@@ -72,6 +72,7 @@ class PLModel:
     def _fit_and_eval(self, X_train_val, y_train_val, **kwargs):
         if self._is_scaler_fitted is False:
             self.fit_scaler(X_train_val)
+        X_train_val = self.scaler.transform(X_train_val)
 
         # Fit
         self.fit(X_train_val, y_train_val)
