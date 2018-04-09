@@ -82,12 +82,6 @@ class XGBoost:
             eval_list.append((self.eval_set, 'validation'))
         self.model = xgb.train(plst, dtrain, self.n_estimators, evals=eval_list)
         self._set_feature_importances(X_train.shape[1])
-        # self.feature_importances_ = [0] * len(X_train[0])
-        # for key, value in self.model.get_fscore().iteritems():
-        #     self.feature_importances_[int(key.split("f")[-1])] = float(value)
-        # sum_importance = sum(self.feature_importances_)
-        # if self.param["booster"] != "gblinear":
-        #     self.feature_importances_ = [value / sum_importance for value in self.feature_importances_]
 
         return
 
@@ -114,13 +108,9 @@ class XGBoost:
         eval_list = [(dtrain, "train"), (dval, "val")]
         self.model = xgb.train(plst, dtrain, self.n_estimators, evals=eval_list)
         self._set_feature_importances(X_train_val.shape[1])
-        # self.feature_importances_ = [0] * len(X_train[0])
-        # for key, value in self.model.get_fscore().iteritems():
-        #     self.feature_importances_[int(key.split("f")[-1])] = float(value)
-        # sum_importance = sum(self.feature_importances_)
-        # if self.param["booster"] != "gblinear":
-        #     self.feature_importances_ = [value / sum_importance for value in self.feature_importances_]
-        # self.fit(X_train_val, y_train_val)
+
+        # Re-fit on all the data
+        self.fit(X_train_val, y_train_val)
 
         return
 
