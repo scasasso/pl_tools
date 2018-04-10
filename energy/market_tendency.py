@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from plot_tools.timeseries import plot_ts_mpl
+from sklearn.metrics import roc_auc_score
 
 logger = logging.getLogger(__file__)
 
@@ -80,7 +81,7 @@ class MarketTendencyValidator(object):
         self.df_val['price_diff'] = (self.df_val['imbalance_price'] - self.df_val['dayahead_price']).round(3)
         self.df_val['price_diff_pos'] = (self.df_val['positive_price'] - self.df_val['dayahead_price']).round(3)
         self.df_val['price_diff_neg'] = (self.df_val['negative_price'] - self.df_val['dayahead_price']).round(3)
-        self.df_val['market_tendency'] = self.df_val['price_diff'].map(lambda x: 1 if x >= 0. else -1)
+        self.df_val['market_tendency'] = np.sign(self.df_val['price_diff']).astype(int)
 
         # Get hour aggregates
         self.df_val['threshold'] = thr
@@ -104,6 +105,8 @@ class MarketTendencyValidator(object):
         self.df_val['gain_cum'] = self.df_val['gain'].cumsum().round(3)
         self.df_val['gain_per_pos'] = (self.df_val['gain_cum'] / (self.df_val['pl_pred'] != 0).cumsum()).round(3)
         self.df_val['accuracy'] = ((self.df_val['pl_correct'] == 1).astype('int8').cumsum().astype(float) / (self.df_val['pl_pred'] != 0).cumsum()).round(3)
+        self.df_val['rocauc'] = roc_auc_score(self.df_val['price_diff'].map(lambda x: 1 if x >= 0 else 0).values,
+                                              self.df_val['prob'].values)
 
         return self.df_val.copy()
 
