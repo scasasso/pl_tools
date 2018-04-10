@@ -87,6 +87,7 @@ class MarketTendencyValidator(object):
         self.df_val['threshold_low'] = thr_low
         self.df_val['pl_pred'] = self.df_val['prob'].groupby(pd.Grouper(freq=self.da_coll.freq)).\
             agg(agg_pred).astype(int).reindex(index=self.df_val.index, method='ffill')
+        self.df_val['frac_pos'] = ((self.df_val['pl_pred'] != 0).astype(int).cumsum() / self.df_val['pl_pred'].expanding(min_periods=1).count()).round(3)
 
         # Are we correct?
         self.df_val['pl_correct'] = (self.df_val['pl_pred'] == self.df_val['market_tendency']).astype('int8')
@@ -109,7 +110,7 @@ class MarketTendencyValidator(object):
     def dump(self, out_dir):
         self.df_val.to_csv(os.path.join(out_dir, 'validation.csv'))
 
-    def scan(self, eval_metric, **kwargs):
+    def scan(self, eval_metric, min_frac_pos=0., **kwargs):
         metric_v_best = 0. if eval_metric == 'accuracy' else -1.E+06
         df_best = pd.DataFrame()
         for thr in DEFAULT_THR_LIST_SCAN:
@@ -117,6 +118,8 @@ class MarketTendencyValidator(object):
                 if thr_low > thr:
                     continue
                 df_val = self.produce_validation(thr=thr, thr_low=thr_low, **kwargs)
+                if df_val.iloc[-1, df_val.columns.get_loc('frac_pos')] < min_frac_pos:
+                    continue
                 metric_v = df_val.iloc[-1, df_val.columns.get_loc(eval_metric)]
                 logger.debug('Scanning thr = {0:.2f}, thr_low = {1:.2f}: {2} = {3:.2f}'.format(thr, thr_low,
                                                                                                eval_metric, metric_v))
