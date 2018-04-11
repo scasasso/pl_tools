@@ -10,7 +10,7 @@ from sklearn.metrics import roc_auc_score
 logger = logging.getLogger(__file__)
 
 # Fir the scan
-DEFAULT_THR_LIST_SCAN = np.round(np.arange(0.2, 0.70001, 0.02), 2)
+DEFAULT_THR_LIST_SCAN = np.round(np.arange(0.2, 0.70001, 0.01), 2)
 
 
 class MarketTendencyValidator(object):
@@ -77,7 +77,7 @@ class MarketTendencyValidator(object):
 
         # Market tendency
         self.df_val = self.df_input.copy()
-        self.df_val['imbalance_price'] = self.df_val[['positive_price', 'negative_price']].mean(axis=1)
+        self.df_val['imbalance_price'] = self.df_val[['positive_price', 'negative_price']].mean(axis=1).round(3)
         self.df_val['price_diff'] = (self.df_val['imbalance_price'] - self.df_val['dayahead_price']).round(3)
         self.df_val['price_diff_pos'] = (self.df_val['positive_price'] - self.df_val['dayahead_price']).round(3)
         self.df_val['price_diff_neg'] = (self.df_val['negative_price'] - self.df_val['dayahead_price']).round(3)
@@ -104,9 +104,25 @@ class MarketTendencyValidator(object):
         self.df_val['gain'] = ((self.df_val['pl_pred'] * self.df_val['price_diff']) / 4.).round(3)
         self.df_val['gain_cum'] = self.df_val['gain'].cumsum().round(3)
         self.df_val['gain_per_pos'] = (self.df_val['gain_cum'] / (self.df_val['pl_pred'] != 0).cumsum()).round(3)
-        self.df_val['accuracy'] = ((self.df_val['pl_correct'] == 1).astype('int8').cumsum().astype(float) / (self.df_val['pl_pred'] != 0).cumsum()).round(3)
-        self.df_val['rocauc'] = roc_auc_score(self.df_val['price_diff'].map(lambda x: 1 if x >= 0 else 0).values,
-                                              self.df_val['prob'].values)
+        self.df_val['accuracy'] = ((self.df_val['pl_correct'] == 1).astype('int8').cumsum().astype(float) / (self.df_val['pl_pred'] != 0).cumsum()).round(3).fillna(0.5)
+        self.df_val['rocauc'] = round(roc_auc_score(self.df_val['price_diff'].map(lambda x: 1 if x >= 0 else 0).values,
+                                                    self.df_val['prob'].values), 3)
+
+        # Compute the hourly statistics
+        df_h = self.df_val[['dayahead_price', 'imbalance_price']].groupby(pd.Grouper(freq='1H')).agg(np.mean)
+        df_h['price_diff'] = df_h['imbalance_price'] - df_h['dayahead_price']
+        df_h['market_tendency'] = np.sign(df_h['price_diff']).astype(int)
+        df_h['pl_pred'] = self.df_val['pl_pred']
+        df_h['pl_correct'] = (df_h['pl_pred'] == df_h['market_tendency']).astype('int8')
+        df_h['pl_correct'] = df_h['pl_correct'].replace(0, -1)
+        df_h.loc[df_h['pl_pred'] == 0, 'pl_correct'] = 0
+        df_h['accuracy'] = ((df_h['pl_correct'] == 1).astype('int8').cumsum().astype(float) / (df_h['pl_pred'] != 0).cumsum()).round(3).fillna(0.5)
+
+        # Add to the original DataFrame
+        self.df_val['accuracy_h'] = df_h['accuracy'].reindex(index=self.df_val.index, method='ffill')
+
+        del df_h
+        gc.collect()
 
         return self.df_val.copy()
 
