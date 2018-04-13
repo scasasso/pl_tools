@@ -46,7 +46,7 @@ def plot_ts_mpl(x, y, title=None, ylab=None, out_dir='.', color='blue', filename
     plt.savefig(os.path.join(out_dir, filename + '.png'))
 
 
-def plot_ts_ply(x, y, title, ylab, out_dir='.', color='blue', filename=None, annotate=None, ylim=None):
+def plot_ts_ply(x, y, title, ylab=None, out_dir='.', color='blue', filename=None, annotate=None, ylim=None):
 
     # Output file
     if filename is None:
@@ -54,6 +54,9 @@ def plot_ts_ply(x, y, title, ylab, out_dir='.', color='blue', filename=None, ann
 
     if annotate is None:
         annotate = ''
+
+    if ylab is None:
+        ylab = ''
 
     # All the things to plot
     if not isinstance(y, list):
