@@ -55,7 +55,7 @@ class SKModel(PLModel):
         # Validate the model
         if 'regressor' in self.model.__class__.__name__.lower():
             preds = self.model.predict(X_val)
-            logger.info('Validation RMSE = {0:.4f}'.format(mean_squared_error(y_val, preds)))
+            logger.info('Validation RMSE = {0:.4f}'.format(np.sqrt(mean_squared_error(y_val, preds))))
         elif 'classifier' in self.model.__class__.__name__.lower():
             preds = self.model.predict_proba(X_val)
             logger.info('Validation ROC AUC = {0:.4f}'.format(roc_auc_score(y_val, preds)))
