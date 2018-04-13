@@ -27,13 +27,18 @@ import numpy as np
 from numpy.linalg import LinAlgError
 from copy import deepcopy
 from statsmodels.tsa.arima_model import ARIMA
+from ml_clf.plmodel import PLModel
+from ml_clf.plmodel import DefaultScaler
+from sklearn.ensemble import RandomForestRegressor
 
 from sklearn.externals.joblib import Parallel, delayed
 
 
-class ArimaModel:
+class ArimaModel(PLModel):
 
-    def __init__(self, params, lookback=24 * 30, max_iter=400, retry=True, verbose=0, fallbacks=None):
+    def __init__(self, params=(5, 1, 1), lookback=24 * 30, max_iter=400, retry=True, fallbacks=None, verbose=0, n_jobs=1):
+        PLModel.__init__(self, model=RandomForestRegressor(), scaler=DefaultScaler())
+
         self.params = params
         self.lookback = lookback
         self.model = None
@@ -42,12 +47,18 @@ class ArimaModel:
         self.max_iter = max_iter
         self.retry = retry
         self.verbose = verbose
+        self.n_jobs = n_jobs
         self.feature_rank = None
         self.fit_results = []
         if fallbacks is None:
             self.fallbacks = []
         else:
             self.fallbacks = fallbacks
+
+        # These do not make sense for Arima: still we have to set them
+        self._is_model_fitted = True
+        self._is_scaler_fitted = True
+
         return
 
     def fit(self, X_train, y_train):
@@ -103,7 +114,7 @@ class ArimaModel:
                     self.fit_results.append(fit_res_dict)
                     break
                 except (LinAlgError, ValueError, AttributeError, ArimaConvergenceError) as e:
-                    n_new = n_tot - int(np.floor(0.05 * n_tot))
+                    n_new = n_tot - int(max(np.floor(0.05 * n_tot), 1.))
                     if self.verbose > 1:
                         print 'Got the following exception:\n{exc}\n' \
                               'Will reduce the number of training samples from ' \
@@ -143,7 +154,7 @@ class ArimaModel:
 
         # Run the fit for each batch
         params = [self.params] + self.fallbacks
-        y_pred = Parallel(n_jobs=3, verbose=self.verbose + 10)(
+        y_pred = Parallel(n_jobs=self.n_jobs, verbose=self.verbose + 10)(
             delayed(_predict_routine)(
                 params, ib=ib, n_tot=len(X), default_fit_res=default_fit_res, batch=batch, lag=lag,
                 lookback=self.lookback, retry=self.retry, max_iter=self.max_iter, verbose=self.verbose)
@@ -207,7 +218,7 @@ def _predict_batch_parallel(params, ib, n_tot, default_fit_res, batch, lag=24, l
 
             break
         except (LinAlgError, ValueError, AttributeError, ArimaConvergenceError) as e:
-            n_new = n_tot - int(np.floor(0.05 * n_tot))
+            n_new = n_tot - int(max(np.floor(0.05 * n_tot), 1.))
             if verbose > 1:
                 print 'Got the following exception:\n{exc}\n' \
                       'Will reduce the number of training samples from ' \
