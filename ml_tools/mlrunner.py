@@ -99,7 +99,7 @@ class MLRunner(object):
         dt_start = pd.Timestamp(self.pl_config['load_start_dt'])
         dt_end = pd.Timestamp(self.pl_config['load_end_dt']) + pd.Timedelta(hours=23) + pd.Timedelta(minutes=59)
         n_preds = len(data_structure[dt_start: dt_end])
-        data_structure_test = build_data_structure_test(data_structure)
+        data_structure_test = build_data_structure_test(data_structure[:dt_end])
 
         self.models = load_models(self.model_filepath + rnt_tag)
 
@@ -258,6 +258,14 @@ class MLRunner(object):
         dt_start = self.pl_config['load_start_dt'] - timedelta(
             days=(max_lat * self.pl_config['granularity'] / (24 * 60 * 60))) - timedelta(
             days=60)
+
+        # # If we use ARIMA we have to take into account the lookback
+        # arima_lag = 0
+        # for m in self.models:
+        #     if 'arima' not in m.__class__.__name__:
+        #         continue
+        #     arima_lag = m.lookback * (60 * 60 // self.pl_config['granularity'])
+        #     dt_start -= timedelta(hours=arima_lag)
         dt_end = self.pl_config['load_end_dt'] + timedelta(hours=23) + timedelta(minutes=59)
 
         dfs = []
@@ -484,7 +492,10 @@ class MLRunner(object):
         n = np.max(map(len, predictions))
         predictions = [np.pad(a, (n - len(a), 0), 'constant', constant_values=(np.nan, np.nan)) for a in predictions]
 
+        if len(predictions) > 1:
+            logger.info('Correlation coefficients across classifiers:\n%s' % str(np.corrcoef(predictions)))
         predictions = np.nanmean(predictions, axis=0)
+
         logger.info('Model prediction: end')
         return predictions
 
