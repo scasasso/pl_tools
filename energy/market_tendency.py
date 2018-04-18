@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from plot_tools.timeseries import plot_ts_mpl
+from plot_tools.histogram import plot_hist_period, plot_sns_class, plot_hist_class
 from sklearn.metrics import roc_auc_score
 
 logger = logging.getLogger(__file__)
@@ -12,14 +13,19 @@ logger = logging.getLogger(__file__)
 # Fir the scan
 DEFAULT_THR_LIST_SCAN = np.round(np.arange(0.2, 0.70001, 0.01), 2)
 
+# Metrics
+METRICS = ['accuracy', 'accuracy_h', 'gain_cum', 'gain_per_pos']
+
 
 class MarketTendencyValidator(object):
-    def __init__(self, da_coll, pos_coll, score_coll, neg_coll=None):
+    def __init__(self, name, da_coll, pos_coll, score_coll, neg_coll=None):
+        self.name = name
         self.da_coll = da_coll
         self.pos_coll = pos_coll
         self.score_coll = score_coll
         self.df_input = pd.DataFrame()
         self.df_val = pd.DataFrame()
+        self.df_scan = pd.DataFrame()
 
         if neg_coll is None:
             self.neg_coll = self.pos_coll
@@ -74,6 +80,7 @@ class MarketTendencyValidator(object):
         # Fetch the data
         if not len(self.df_input) > 0:
             self.df_input = self._fetch(dt_start, dt_end)
+            self.df_input['name'] = self.name
 
         # Market tendency
         self.df_val = self.df_input.copy()
@@ -128,17 +135,40 @@ class MarketTendencyValidator(object):
 
     def dump(self, out_dir):
         self.df_val.to_csv(os.path.join(out_dir, 'validation.csv'))
+        if len(self.df_scan) > 0:
+            self.df_scan.to_csv(os.path.join(out_dir, 'scan.csv'))
 
-    def scan(self, eval_metric, min_frac_pos=0., **kwargs):
+    def scan(self, eval_metric, min_frac_pos=0., thr_list=None, **kwargs):
         metric_v_best = 0. if eval_metric == 'accuracy' else -1.E+06
+
+        # List of thresholds to loop over
+        if thr_list is None:
+            thr_list = DEFAULT_THR_LIST_SCAN
+
+        # Initialize the scan data
+        scan_data = []
+
         df_best = pd.DataFrame()
-        for thr in DEFAULT_THR_LIST_SCAN:
-            for thr_low in DEFAULT_THR_LIST_SCAN:
+        for thr in thr_list:
+            for thr_low in thr_list:
                 if thr_low > thr:
                     continue
+                # Do the validation for this point in the scan
                 df_val = self.produce_validation(thr=thr, thr_low=thr_low, **kwargs)
+
+                # Add data for this point of the scan
+                point_dict = {'name': df_val['name'][0],
+                              'thr': thr, 'thr_low': thr_low,
+                              'frac_pos': df_val.iloc[-1, df_val.columns.get_loc('frac_pos')]}
+                for met in METRICS:
+                    point_dict[met] = df_val.iloc[-1, df_val.columns.get_loc(met)]
+                scan_data.append(point_dict)
+
+                # If nto enough positions taken -> discard
                 if df_val.iloc[-1, df_val.columns.get_loc('frac_pos')] < min_frac_pos:
                     continue
+
+                # Check the current value of the metric and eventually replace the best value
                 metric_v = df_val.iloc[-1, df_val.columns.get_loc(eval_metric)]
                 logger.debug('Scanning thr = {0:.2f}, thr_low = {1:.2f}: {2} = {3:.2f}'.format(thr, thr_low,
                                                                                                eval_metric, metric_v))
@@ -149,77 +179,84 @@ class MarketTendencyValidator(object):
                 del df_val
                 gc.collect()
 
+        # keep the best
         self.df_val = df_best.copy()
+
+        # Write the scan data
+        self.df_scan = pd.DataFrame(data=scan_data)
+
+        # Cleanup
         del df_best
         gc.collect()
 
 
 class MarketTendencyPlotter(object):
-    def __init__(self, df, out_dir):
-        if isinstance(df, pd.core.frame.DataFrame):
-            self.df_val = df.copy()
-        else:
-            self.df_val = pd.read_csv(df, index_col=0, parse_dates=[0])
+    def __init__(self, df, out_dir, labels=None):
+        self.df_val = []
+        if not isinstance(df, list):
+            df = [df]
+
+        for df_ in df:
+            if isinstance(df_, pd.core.frame.DataFrame):
+                self.df_val.append(df_.copy())
+            else:
+                self.df_val.append(pd.read_csv(df_, index_col=0, parse_dates=[0]))
         self.out_dir = out_dir
+
+        # Labels
+        self.labels = labels
+        if self.labels is not None:
+            if len(self.labels) != len(self.df_val):
+                msg = 'You must provide an array of labels with the same length as the list of data in input'
+                logger.error(msg)
+                raise ValueError(msg)
+
+            for i, _ in enumerate(self.df_val):
+                self.df_val[i] = self.df_val[i].rename({'name': 'model'})
+                self.df_val[i]['name'] = self.labels[i]
 
     def plot_ts_smooth(self, what, smooth=None, **kwargs):
 
-        xs = self.df_val.index
+        xs = self.df_val[0].index
+
         fname = 'ts_' + what
         if smooth is not None:
             fname += '_smooth' + str(smooth)
-            ys = self.df_val[what].rolling(window=smooth, min_periods=1).mean().values
-        else:
-            ys = self.df_val[what].values
-        plot_ts_mpl(xs, ys, title=kwargs.get('title', None), ylab=kwargs.get('ylab', None),
+
+        ys, titles = [], []
+        for i, df in enumerate(self.df_val):
+            titles.append(df['name'][0])
+            if smooth is not None:
+                ys.append(df[what].rolling(window=smooth, min_periods=1).mean().values)
+            else:
+                ys.append(df[what].values)
+
+        plot_ts_mpl(xs, ys, title=titles, ylab=kwargs.get('ylab', None),
                     out_dir=self.out_dir, filename=fname)
 
     def plot_ts_group(self, what, group='1D', func=np.sum, **kwargs):
 
-        xs = self.df_val.groupby(pd.Grouper(freq=group)).agg(lambda x: x[0]).index
+        xs = self.df_val[0].groupby(pd.Grouper(freq=group)).agg(lambda x: x[0]).index
         fname = 'ts_' + what + '_group' + str(group)
-        ys = self.df_val[what].groupby(pd.Grouper(freq=group)).agg(func)
-        plot_ts_mpl(xs, ys, title=kwargs.get('title', None), ylab=kwargs.get('ylab', None),
+
+        ys, titles = [], []
+        for df in self.df_val:
+            titles.append(df['name'][0])
+            ys.append(df[what].groupby(pd.Grouper(freq=group)).agg(func))
+        plot_ts_mpl(xs, ys, title=titles, ylab=kwargs.get('ylab', None),
                     out_dir=self.out_dir, filename=fname)
 
-    def plot_hist_group(self, what, group='1D', func=np.sum, **kwargs):
-        fname = 'hist_' + what + '_group%s.png' % group
-        a = self.df_val[what].groupby(pd.Grouper(freq=group)).agg(func).values
+    def plot_hist_inperiod(self, what, group='1D', func=np.sum, **kwargs):
+        for df in self.df_val:
+            add_tag = '_' + df['name'][0] if len(self.df_val) > 1 else ''
+            plot_hist_period(df[what], self.out_dir, tag=add_tag, group=group, func=func, **kwargs)
 
-        fig, ax = plt.subplots()
-        x_bins = kwargs.get('x_bins', None)
-        if x_bins is None:
-            x_min, x_max = min(a), max(a)
-            x_bins = np.linspace(x_min, x_max, 100)
+    def plot_sns_inclass(self, what, category, **kwargs):
+        for df in self.df_val:
+            add_tag = '_' + df['name'][0] if len(self.df_val) > 1 else ''
+            plot_sns_class(df, what, category,  self.out_dir, tag=add_tag, **kwargs)
 
-        ax.hist(a, alpha=0.7, histtype='step', bins=x_bins, color='blue', fill=True)
-
-        if kwargs.get('xlab', None) is not None:
-            plt.xlabel(kwargs['xlab'])
-        else:
-            plt.xlabel(what)
-        # plt.legend(loc='best')
-        plt.savefig(os.path.join(self.out_dir, fname))
-
-    def plot_hist_class(self, what, **kwargs):
-        fname = 'hist_' + what + '_classes.png'
-        a_long = self.df_val.loc[self.df_val['market_tendency'] == -1, what].values
-        a_short = self.df_val.loc[self.df_val['market_tendency'] == 1, what].values
-
-        fig, ax = plt.subplots()
-        x_bins = kwargs.get('x_bins', None)
-        if x_bins is None:
-            x_min, x_max = min(np.concatenate((a_long, a_short))), max(np.concatenate((a_long, a_short)))
-            x_bins = np.linspace(x_min, x_max, 100)
-
-        ax.hist(a_long, alpha=0.2, histtype='step', bins=x_bins, color='green', fill=True, label='Market long')
-        ax.hist(a_short, alpha=0.2, histtype='step', bins=x_bins, color='red', fill=True, label='Market short')
-
-        if kwargs.get('xlab', None) is not None:
-            plt.xlabel(kwargs['xlab'])
-        else:
-            plt.xlabel(what)
-        plt.legend(loc='best')
-        plt.savefig(os.path.join(self.out_dir, fname))
-
-
+    def plot_hist_inclass(self, what, category, **kwargs):
+        for df in self.df_val:
+            add_tag = '_' + df['name'][0] if len(self.df_val) > 1 else ''
+            plot_hist_class(df, what, category,  self.out_dir, tag=add_tag, **kwargs)
