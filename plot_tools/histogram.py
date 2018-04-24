@@ -25,18 +25,21 @@ def plot_hist_period(s, out_dir, tag='', group='1D', func=np.sum, **kwargs):
 
         desc = s.describe()
         plt.text(0.02, 0.95, 'count = {0}'.format(int(desc['count'])), transform=ax.transAxes)
-        plt.text(0.02, 0.90, 'mean = {0:.2f}'.format(desc['mean']), transform=ax.transAxes)
-        plt.text(0.02, 0.85, 'std = {0:.2f}'.format(desc['std']), transform=ax.transAxes)
-        plt.text(0.02, 0.80, 'min = {0:.2f}'.format(desc['min']), transform=ax.transAxes)
-        plt.text(0.02, 0.75, '25% = {0:.2f}'.format(desc['25%']), transform=ax.transAxes)
-        plt.text(0.02, 0.70, 'median = {0:.2f}'.format(desc['50%']), transform=ax.transAxes)
-        plt.text(0.02, 0.65, '75% = {0:.2f}'.format(desc['75%']), transform=ax.transAxes)
-        plt.text(0.02, 0.60, 'max = {0:.2f}'.format(desc['max']), transform=ax.transAxes)
+        plt.text(0.02, 0.90, 'mean = {0:.4f}'.format(desc['mean']), transform=ax.transAxes)
+        plt.text(0.02, 0.85, 'std = {0:.4f}'.format(desc['std']), transform=ax.transAxes)
+        plt.text(0.02, 0.80, 'min = {0:.4f}'.format(desc['min']), transform=ax.transAxes)
+        plt.text(0.02, 0.75, '25% = {0:.4f}'.format(desc['25%']), transform=ax.transAxes)
+        plt.text(0.02, 0.70, 'median = {0:.4f}'.format(desc['50%']), transform=ax.transAxes)
+        plt.text(0.02, 0.65, '75% = {0:.4f}'.format(desc['75%']), transform=ax.transAxes)
+        plt.text(0.02, 0.60, 'max = {0:.4f}'.format(desc['max']), transform=ax.transAxes)
 
     if kwargs.get('xlab', None) is not None:
         plt.xlabel(kwargs['xlab'])
     else:
         plt.xlabel(what)
+
+    if kwargs.get('ylim', None):
+        plt.ylim(kwargs['ylim'])
 
     plt.savefig(os.path.join(out_dir, fname))
 
@@ -57,17 +60,6 @@ def plot_hist_class(df, plot_col, cat_col, out_dir, tag='', **kwargs):
         cat_str = cat_col + ' = ' + str(cat)
         ax.hist(a, alpha=0.3, histtype='step', bins=x_bins, color=COLOR_LIST_MPL[i], fill=True, label=cat_str)
 
-    # if kwargs.get('add_desc', False) is True:
-    #     desc = s.describe()
-    #     plt.text(0.02, 0.95, 'count = {0}'.format(int(desc['count'])), transform=ax.transAxes)
-    #     plt.text(0.02, 0.90, 'mean = {0:.2f}'.format(desc['mean']), transform=ax.transAxes)
-    #     plt.text(0.02, 0.85, 'std = {0:.2f}'.format(desc['std']), transform=ax.transAxes)
-    #     plt.text(0.02, 0.80, 'min = {0:.2f}'.format(desc['min']), transform=ax.transAxes)
-    #     plt.text(0.02, 0.75, '25% = {0:.2f}'.format(desc['25%']), transform=ax.transAxes)
-    #     plt.text(0.02, 0.70, 'median = {0:.2f}'.format(desc['50%']), transform=ax.transAxes)
-    #     plt.text(0.02, 0.65, '75% = {0:.2f}'.format(desc['75%']), transform=ax.transAxes)
-    #     plt.text(0.02, 0.60, 'max = {0:.2f}'.format(desc['max']), transform=ax.transAxes)
-
     if kwargs.get('xlab', None) is not None:
         plt.xlabel(kwargs['xlab'])
     else:
@@ -80,7 +72,7 @@ def plot_hist_class(df, plot_col, cat_col, out_dir, tag='', **kwargs):
     plt.savefig(os.path.join(out_dir, fname))
 
 
-def plot_sns_class(df, plot_col, cat_col, out_dir, tag='', group=None, func=np.sum, **kwargs):
+def plot_sns_class(df, plot_col, cat_col, out_dir, tag='', **kwargs):
 
     # Initialize the figure
     fig, ax = plt.subplots()
@@ -88,11 +80,6 @@ def plot_sns_class(df, plot_col, cat_col, out_dir, tag='', group=None, func=np.s
     # Plot options
     plot_type = kwargs.get('plot_type', 'boxplot')
     orient = kwargs.get('orient', 'h')
-
-    # # Aggregation
-    # if group is not None:
-    #     df = df.groupby(pd.Grouper(freq=group)).agg({plot_col: func, cat_col: np.mean}).reset_index()
-    #     tag = '_group' + group + tag
 
     # File name
     fname = '%s_%s_%s_classes%s.png' % (plot_type, plot_col, cat_col, tag)
@@ -109,3 +96,40 @@ def plot_sns_class(df, plot_col, cat_col, out_dir, tag='', group=None, func=np.s
         ax.set_xlim(xlim[0], xlim[1])
 
     plt.savefig(os.path.join(out_dir, fname))
+
+
+def plot_scan(df, what, out_dir, tag=''):
+
+    # Retrieve information about the thresholds
+    thrs = np.concatenate((df['thr'].unique(), df['thr_low'].unique()))
+    thrs = sorted(list(set(thrs)))
+    thr_min, thr_max = np.min(thrs), np.max(thrs)
+    thr_step = np.min(np.array(thrs[1:]) - np.array(thrs[:-1]))
+    n_bins = len(np.arange(thr_min, thr_max + 0.00001, thr_step))
+
+    # Build x, y bins
+    x, y = np.mgrid[slice(thr_min - thr_step/2., thr_max + thr_step/2. + 0.00001, thr_step),
+                    slice(thr_min - thr_step/2., thr_max + thr_step/2. + 0.00001, thr_step)]
+
+    z = -1.E+06 * np.ones((n_bins, n_bins))
+    for irow, row in df.iterrows():
+        i = int(round((row['thr'] - thr_min) / thr_step))
+        j = int(round((row['thr_low'] - thr_min) / thr_step))
+        z[i, j] = row[what]
+
+    z_max = np.max(z)
+    z_min = max(np.min(z[z > -1.]), 0.)
+
+    # Initialize the figure
+    fig, ax = plt.subplots()
+    plt.pcolor(x, y, z, cmap='seismic', vmin=z_min, vmax=z_max)
+
+    plt.title(df['name'][0])
+
+    # # set the limits of the plot to the limits of the data
+    plt.axis([x.min(), x.max(), y.min(), y.max()])
+    ax.set_xlabel('thr')
+    ax.set_ylabel('thr_low')
+    plt.colorbar()
+
+    plt.savefig(os.path.join(out_dir, 'scan_%s%s.png' % (what, tag)))

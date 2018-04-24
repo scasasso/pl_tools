@@ -3,9 +3,8 @@ import gc
 import logging
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 from plot_tools.timeseries import plot_ts_mpl
-from plot_tools.histogram import plot_hist_period, plot_sns_class, plot_hist_class
+from plot_tools.histogram import plot_hist_period, plot_sns_class, plot_hist_class, plot_scan
 from sklearn.metrics import roc_auc_score
 
 logger = logging.getLogger(__file__)
@@ -51,9 +50,21 @@ class MarketTendencyValidator(object):
 
         return df.copy()
 
-    def produce_validation(self, dt_start, dt_end, thr, thr_low=None, agg_pred=None, use_avg_price=True):
+    def produce_validation(self, dt_start, dt_end, thr, thr_low=None, agg_pred=None, use_avg_price=True, skip_dates=None):
+        # Default
         if thr_low is None:
             thr_low = thr
+
+        # Default
+        if skip_dates is None:
+            skip_dates = []
+        for i, d in enumerate(skip_dates):
+            try:
+                skip_dates[i] = pd.Timestamp(d)
+            except Exception as e:
+                msg = 'Problem in converting datetime %s, got following exception:\n%s' % (d, str(e))
+                logger.error(msg)
+                raise ValueError(msg)
 
         def default_aggregator(ps):
             preds_h = []
@@ -82,13 +93,20 @@ class MarketTendencyValidator(object):
             self.df_input = self._fetch(dt_start, dt_end)
             self.df_input['name'] = self.name
 
+        # Eventually drop dates
+        try:
+            self.df_input = self.df_input.drop(skip_dates)
+        except ValueError:
+            logger.warning('You are trying to skip dates which are not in index')
+            pass
+
         # Market tendency
         self.df_val = self.df_input.copy()
         self.df_val['imbalance_price'] = self.df_val[['positive_price', 'negative_price']].mean(axis=1).round(3)
         self.df_val['price_diff'] = (self.df_val['imbalance_price'] - self.df_val['dayahead_price']).round(3)
         self.df_val['price_diff_pos'] = (self.df_val['positive_price'] - self.df_val['dayahead_price']).round(3)
         self.df_val['price_diff_neg'] = (self.df_val['negative_price'] - self.df_val['dayahead_price']).round(3)
-        self.df_val['market_tendency'] = np.sign(self.df_val['price_diff']).astype(int)
+        self.df_val['market_tendency'] = np.sign(self.df_val['price_diff'].fillna(0.)).astype(int)
 
         # Get hour aggregates
         self.df_val['threshold'] = thr
@@ -118,7 +136,8 @@ class MarketTendencyValidator(object):
         # Compute the hourly statistics
         df_h = self.df_val[['dayahead_price', 'imbalance_price']].groupby(pd.Grouper(freq='1H')).agg(np.mean)
         df_h['price_diff'] = df_h['imbalance_price'] - df_h['dayahead_price']
-        df_h['market_tendency'] = np.sign(df_h['price_diff']).astype(int)
+        df_h['market_tendency'] = np.sign(df_h['price_diff'].fillna(-10.)).astype(int)
+        df_h = df_h.loc[df_h['market_tendency'] > -10, :]
         df_h['pl_pred'] = self.df_val['pl_pred']
         df_h['pl_correct'] = (df_h['pl_pred'] == df_h['market_tendency']).astype('int8')
         df_h['pl_correct'] = df_h['pl_correct'].replace(0, -1)
@@ -138,7 +157,7 @@ class MarketTendencyValidator(object):
         if len(self.df_scan) > 0:
             self.df_scan.to_csv(os.path.join(out_dir, 'scan.csv'))
 
-    def scan(self, eval_metric, min_frac_pos=0., thr_list=None, **kwargs):
+    def scan(self, eval_metric, min_frac_pos=0., thr_list=None, plot=False, out_dir=None, **kwargs):
         metric_v_best = 0. if eval_metric == 'accuracy' else -1.E+06
 
         # List of thresholds to loop over
@@ -148,6 +167,7 @@ class MarketTendencyValidator(object):
         # Initialize the scan data
         scan_data = []
 
+        # Deafult results
         df_best = pd.DataFrame()
         for thr in thr_list:
             for thr_low in thr_list:
@@ -162,12 +182,13 @@ class MarketTendencyValidator(object):
                               'frac_pos': df_val.iloc[-1, df_val.columns.get_loc('frac_pos')]}
                 for met in METRICS:
                     point_dict[met] = df_val.iloc[-1, df_val.columns.get_loc(met)]
-                scan_data.append(point_dict)
 
-                # If nto enough positions taken -> discard
+                # If not enough positions taken -> discard
                 if df_val.iloc[-1, df_val.columns.get_loc('frac_pos')] < min_frac_pos:
-                    continue
+                    for met in METRICS:
+                        point_dict[met] = -1.E+06
 
+                scan_data.append(point_dict)
                 # Check the current value of the metric and eventually replace the best value
                 metric_v = df_val.iloc[-1, df_val.columns.get_loc(eval_metric)]
                 logger.debug('Scanning thr = {0:.2f}, thr_low = {1:.2f}: {2} = {3:.2f}'.format(thr, thr_low,
@@ -184,6 +205,13 @@ class MarketTendencyValidator(object):
 
         # Write the scan data
         self.df_scan = pd.DataFrame(data=scan_data)
+
+        # Eventually, plot
+        if plot is True:
+            if out_dir is None:
+                logger.warning('You must specify the out_dir parameter to plot the scan')
+            else:
+                plot_scan(self.df_scan, what=eval_metric, out_dir=out_dir)
 
         # Cleanup
         del df_best
