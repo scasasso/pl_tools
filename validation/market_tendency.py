@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 from plot_tools.timeseries import plot_ts_mpl
 from plot_tools.histogram import plot_hist_period, plot_sns_class, plot_hist_class, plot_scan
+from plot_tools.graph import plot_scan_1d
 from sklearn.metrics import roc_auc_score
 
 logger = logging.getLogger(__file__)
@@ -157,7 +158,7 @@ class MarketTendencyValidator(object):
         if len(self.df_scan) > 0:
             self.df_scan.to_csv(os.path.join(out_dir, 'scan.csv'))
 
-    def scan(self, eval_metric, min_frac_pos=0., thr_list=None, plot=False, out_dir=None, **kwargs):
+    def scan(self, eval_metric, min_frac_pos=0., thr_list=None, scan2d=True, plot=False, out_dir=None, **kwargs):
         metric_v_best = 0. if eval_metric == 'accuracy' else -1.E+06
 
         # List of thresholds to loop over
@@ -172,6 +173,8 @@ class MarketTendencyValidator(object):
         for thr in thr_list:
             for thr_low in thr_list:
                 if thr_low > thr:
+                    continue
+                if scan2d is not True and thr != thr_low:
                     continue
                 # Do the validation for this point in the scan
                 df_val = self.produce_validation(thr=thr, thr_low=thr_low, **kwargs)
@@ -211,7 +214,10 @@ class MarketTendencyValidator(object):
             if out_dir is None:
                 logger.warning('You must specify the out_dir parameter to plot the scan')
             else:
-                plot_scan(self.df_scan, what=eval_metric, out_dir=out_dir)
+                if scan2d is True:
+                    plot_scan(self.df_scan, what=eval_metric, out_dir=out_dir)
+                else:
+                    plot_scan_1d(self.df_scan, what=eval_metric, out_dir=out_dir)
 
         # Cleanup
         del df_best
