@@ -1,13 +1,33 @@
 from pymongo.mongo_client import MongoClient
 from datetime import timedelta, datetime
+from pytz import timezone
 import pandas as pd
 
 
+def get_day_saving_time_day(tz='Europe/Paris', year=2018):
+    tz = timezone(tz)
+    results= []
+    for day in tz._utc_transition_times:
+        if day.year == year:
+            results.append(datetime(day.year, day.month, day.day))
+    return results
+
+
+def get_gran_from_freq(freq):
+    if 'H' in freq:
+        return 1
+    elif 'T' in freq:
+        n = int(freq.replace('T', ''))
+        return 60 // n
+    else:
+        raise ValueError('Don\'t know how to convert frequency %s to granularity' % freq)
+
+
 def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_field='day', value_field='v',
-                 out_format='dict', missing_pol='auto', inexcess_pol='slice', add_query=None, verbose=0):
+                 out_format='dict', missing_pol='auto', inexcess_pol='slice', add_query=None, tz='Europe/Paris', verbose=0):
     # Check arguments
     allowed_out_formats = ['dict', 'list', 'dataframe']
-    allowed_missing_pol = ['raise', 'prepend', 'append', 'skip', 'auto']
+    allowed_missing_pol = ['raise', 'pad', 'prepend', 'append', 'skip', 'auto']
     allowed_inexcess_pol = ['raise', 'slice']
 
     if verbose > 1:
@@ -46,17 +66,45 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
 
         dt = row[date_field]
         values = row[value_field]
+
+        # Daylight saving time
+        res = get_day_saving_time_day(tz=tz, year=dt.year)
+        h_to_remove, h_to_clone = None, None
+        if dt == res[0]:
+            if tz.startswith('Europe'):
+                h_to_remove = 1
+            else:
+                h_to_remove = 2
+        elif dt == res[1]:
+            h_to_clone = 1
         
         # Build the datetime list
         datetimes = pd.date_range(start=dt,
                                   end=dt + timedelta(hours=23) + timedelta(minutes=59) + timedelta(seconds=59),
                                   freq=granularity)
+        if h_to_clone is not None:
+            datetimes_l = datetimes.tolist()
+            dts_to_clone = [d for d in datetimes_l if d.hour == h_to_clone]
+            g = get_gran_from_freq(granularity)
+            datetimes_l = datetimes_l[:g + g * h_to_clone] + dts_to_clone + datetimes_l[g + g * h_to_clone:]
+            datetimes = pd.DatetimeIndex(datetimes_l)
+
+        if h_to_remove is not None:
+            datetimes = [d for d in datetimes if d.hour != h_to_remove]
 
         if len(datetimes) > len(values):
             if missing_pol == 'raise':
                 raise ValueError('For date {date} found {nf} values instead {ne}'.format(date=dt.strftime('%Y-%m-%d'),
                                                                                          nf=len(values),
                                                                                          ne=len(datetimes)))
+            elif missing_pol == 'pad':
+                if h_to_clone is not None:
+                    datetimes_l = datetimes.tolist()
+                    dts_to_clone = [d for d in datetimes_l if d.hour == h_to_clone]
+                    imin, imax = datetimes_l.index(dts_to_clone[0]), datetimes_l.index(dts_to_clone[-1]) + 1
+                    values = values[:imax] + values[imin: imax] + values[imax:]
+                else:
+                    values.extend(values[-1] * len(datetimes) - len(values))
             elif missing_pol == 'prepend':
                 datetimes = datetimes[:len(values)]
             elif missing_pol == 'append':

@@ -24,7 +24,6 @@ class Collection(object):
             self.db_name = db_name
             self.client = None
             self.conn = None
-            self.coll = None
         else:
             msg = 'You must provide either valid db_uri and db_name or a valid connection'
             logger.error(msg)
@@ -62,7 +61,7 @@ class Collection(object):
 
         try:
             self.client = MongoClient(self.db_uri)
-            self.conn = self.client[self.db_name][self.name]
+            self.conn = self.client[self.db_name]
         except Exception as e:
             msg = 'Could not connect to the database due to the following exception:\n%s' % str(e)
             logger.error(msg)
@@ -83,9 +82,9 @@ class Collection(object):
 
         self.data = get_daily_ts(self.conn, self.name, dt_start, dt_end,
                                  date_field=self.field_day, value_field=self.field_value,
-                                 granularity=self.freq, out_format='dataframe', missing_pol='raise',
+                                 granularity=self.freq, out_format='dataframe', missing_pol='pad',
                                  add_query=self.add_params,
-                                 verbose=1)
+                                 verbose=kwargs.get('verbose', 2))
 
         if kwargs.get('rename', False) is True:
             self.data = self.data.rename({self.field_value: self.name}, axis=1)
@@ -97,7 +96,7 @@ class Collection(object):
     def get_data(self, **kwargs):
         self.connect()
         self._get_data(**kwargs)
-        self.close()
+        # self.close()  # works from version 3.6.0
 
         return self.data.copy()
 

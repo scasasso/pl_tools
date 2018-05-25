@@ -114,6 +114,7 @@ class MarketTendencyValidator(object):
         self.df_val['threshold_low'] = thr_low
         self.df_val['pl_pred'] = self.df_val['prob'].groupby(pd.Grouper(freq=self.da_coll.freq)).\
             agg(agg_pred).astype(int).reindex(index=self.df_val.index, method='ffill')
+        self.df_val['pl_pred_str'] = self.df_val.apply(lambda x: 'short' if x['pl_pred'] == 1 else 'long' if x['pl_pred'] == -1 else 'none', axis=1)
         self.df_val['frac_pos'] = ((self.df_val['pl_pred'] != 0).astype(int).cumsum() / self.df_val['pl_pred'].expanding(min_periods=1).count()).round(3)
 
         # Are we correct?
@@ -180,22 +181,31 @@ class MarketTendencyValidator(object):
                 df_val = self.produce_validation(thr=thr, thr_low=thr_low, **kwargs)
 
                 # Add data for this point of the scan
+                frac_pos = df_val.iloc[-1, df_val.columns.get_loc('frac_pos')]
                 point_dict = {'name': df_val['name'][0],
                               'thr': thr, 'thr_low': thr_low,
-                              'frac_pos': df_val.iloc[-1, df_val.columns.get_loc('frac_pos')]}
+                              'frac_pos': frac_pos}
                 for met in METRICS:
                     point_dict[met] = df_val.iloc[-1, df_val.columns.get_loc(met)]
 
                 # If not enough positions taken -> discard
-                if df_val.iloc[-1, df_val.columns.get_loc('frac_pos')] < min_frac_pos:
+                if frac_pos < min_frac_pos:
                     for met in METRICS:
                         point_dict[met] = -1.E+06
 
                 scan_data.append(point_dict)
+
                 # Check the current value of the metric and eventually replace the best value
                 metric_v = df_val.iloc[-1, df_val.columns.get_loc(eval_metric)]
-                logger.debug('Scanning thr = {0:.2f}, thr_low = {1:.2f}: {2} = {3:.2f}'.format(thr, thr_low,
-                                                                                               eval_metric, metric_v))
+                logger.debug('Scanning thr = {0:.2f}, '
+                             'thr_low = {1:.2f}, '
+                             'fraction of positions = {2:.2f}: {3} = {4:.2f}'.format(thr, thr_low, frac_pos,
+                                                                                     eval_metric, metric_v))
+
+                if frac_pos < min_frac_pos:
+                    logger.debug('Discard because fraction of positions is below threshold')
+                    continue
+
                 if metric_v > metric_v_best:
                     logger.info('New best {0} = {1:.2f}'.format(eval_metric, metric_v))
                     metric_v_best = metric_v

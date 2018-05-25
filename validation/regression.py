@@ -27,17 +27,25 @@ class RegressionValidator(object):
 
     def _fetch(self, dt_start, dt_end):
         # Target
-        df_target = self.target_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='target')
+        if isinstance(self.target_coll, pd.core.series.Series) or isinstance(self.target_coll, pd.core.frame.DataFrame):
+            _df = pd.DataFrame(self.target_coll)
+            df_target = _df.rename({_df.columns[0]: 'target'}, axis=1)
+        else:
+            df_target = self.target_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='target')
 
         df_preds = []
         for pred in self.pred_colls:
             # Predictions
-            df_preds.append(pred.get_data(dt_start=dt_start, dt_end=dt_end, rename='pred_' + pred.name))
+            if isinstance(pred, pd.core.series.Series) or isinstance(pred, pd.core.frame.DataFrame):
+                _df = pd.DataFrame(pred)
+                df_preds.append(_df.rename({_df.columns[0]: 'pred_' + _df.columns[0]}, axis=1))
+            else:
+                df_preds.append(pred.get_data(dt_start=dt_start, dt_end=dt_end, rename='pred_' + pred.name))
 
         # Concatenate
         df = pd.concat([df_target] + df_preds, axis=1).round(self.round)
 
-        return df.copy()
+        return df.dropna(how='any')
 
     def produce_validation(self, dt_start, dt_end, skip_dates=None):
         # Default
@@ -61,8 +69,9 @@ class RegressionValidator(object):
             logger.warning('You are trying to skip dates which are not in index')
             pass
 
-        # Add the blend
-        self.df_val['pred_blend'] = self.df_val.filter(regex="pred_.*").mean(axis=1).round(self.round)
+        if len(self.pred_colls) > 1:
+            # Add the blend
+            self.df_val['pred_blend'] = self.df_val.filter(regex="pred_.*").mean(axis=1).round(self.round)
 
         # Add the regression metrics
         for col in self.df_val.columns:
@@ -128,7 +137,7 @@ class RegressionPlotter(object):
             logger.error(msg)
             raise ValueError(msg)
 
-    def plot_ts_smooth(self, what, smooth=None, ylab=None, backend='plotly'):
+    def plot_ts_smooth(self, what, smooth=None, ylab=None, backend='plotly', **kwargs):
 
         # Datetimes
         xs = self.df_val.index
@@ -159,13 +168,12 @@ class RegressionPlotter(object):
 
         if backend == 'matplotlib':
             plot_ts_mpl(xs, ys, title=titles, ylab=ylab,
-                        out_dir=self.out_dir, filename=fname)
+                        out_dir=self.out_dir, filename=fname, **kwargs)
         else:
             plot_ts_ply(xs, ys, title=titles, ylab=ylab,
-                        out_dir=self.out_dir, filename=fname)
+                        out_dir=self.out_dir, filename=fname, **kwargs)
 
     def plot_hist_inperiod(self, what, group='1D', func=np.mean, **kwargs):
-        for col, label in zip(self.df_val.columns, self.labels):
-            if col.startswith(what) is not True:
-                continue
-            plot_hist_period(self.df_val[col], self.out_dir, tag=label, group=group, func=func, **kwargs)
+        cols = [c for c in self.df_val.columns if c.startswith(what)]
+        for col, label in zip(cols, self.labels):
+            plot_hist_period(self.df_val[col], self.out_dir, tag='_' + label, group=group, func=func, **kwargs)
