@@ -28,11 +28,14 @@ import pandas as pd
 
 
 def get_day_saving_time_day(tz='Europe/Paris', year=2018):
-    tz = timezone(tz)
-    results= []
-    for day in tz._utc_transition_times:
-        if day.year == year:
-            results.append(datetime(day.year, day.month, day.day))
+    results = []
+    try:
+        tz = timezone(tz)
+        for day in tz._utc_transition_times:
+            if day.year == year:
+                results.append(datetime(day.year, day.month, day.day))
+    except Exception:
+        pass
     return results
 
 
@@ -47,7 +50,7 @@ def get_gran_from_freq(freq):
 
 
 def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_field='day', value_field='v',
-                 out_format='dict', missing_pol='auto', inexcess_pol='slice', add_query=None, tz='Europe/Paris', verbose=0):
+                 out_format='dict', missing_pol='auto', inexcess_pol='slice', add_query=None, tz=None, verbose=0):
     # Check arguments
     allowed_out_formats = ['dict', 'list', 'dataframe']
     allowed_missing_pol = ['raise', 'pad', 'prepend', 'append', 'skip', 'auto']
@@ -93,13 +96,14 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
         # Daylight saving time
         res = get_day_saving_time_day(tz=tz, year=dt.year)
         h_to_remove, h_to_clone = None, None
-        if dt == res[0]:
-            if tz.startswith('Europe'):
-                h_to_remove = 1
-            else:
-                h_to_remove = 2
-        elif dt == res[1]:
-            h_to_clone = 1
+        if tz is not None:
+            if dt == res[0]:
+                if tz.startswith('Europe'):
+                    h_to_remove = 1
+                else:
+                    h_to_remove = 2
+            elif dt == res[1]:
+                h_to_clone = 1
         
         # Build the datetime list
         datetimes = pd.date_range(start=dt,
@@ -127,7 +131,7 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
                     imin, imax = datetimes_l.index(dts_to_clone[0]), datetimes_l.index(dts_to_clone[-1]) + 1
                     values = values[:imax] + values[imin: imax] + values[imax:]
                 else:
-                    values.extend(values[-1] * len(datetimes) - len(values))
+                    values.extend(values[-1:] * (len(datetimes) - len(values)))
             elif missing_pol == 'prepend':
                 datetimes = datetimes[:len(values)]
             elif missing_pol == 'append':
