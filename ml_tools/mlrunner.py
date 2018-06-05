@@ -1,3 +1,26 @@
+# -*- coding: utf-8 -*-
+"""
+################################################################################
+#
+# File:     mlrunner.py
+#
+# Project:  Predictive Layer for: pl_tools
+# Author:   Stefano
+# Date:     27 January 2018
+#
+# Scope:    The file contains a ML class for timseries forecasting
+#
+# Copyright (c) 2018, Predictive Layer Limited.  All Rights Reserved.
+#
+# The contents of this software are proprietary and confidential to the author.
+# No part of this program may be photocopied,  reproduced, or translated into
+# another programming language without prior written consent of the author.
+#
+#
+#
+################################################################################
+"""
+
 import os
 from copy import deepcopy
 from datetime import datetime, timedelta

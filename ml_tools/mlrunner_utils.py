@@ -1,3 +1,26 @@
+# -*- coding: utf-8 -*-
+"""
+################################################################################
+#
+# File:     mlrunner_utils.py
+#
+# Project:  Predictive Layer for: pl_tools
+# Author:   Stefano
+# Date:     27 January 2018
+#
+# Scope:    The file contains utilities functions for ML class
+#
+# Copyright (c) 2018, Predictive Layer Limited.  All Rights Reserved.
+#
+# The contents of this software are proprietary and confidential to the author.
+# No part of this program may be photocopied,  reproduced, or translated into
+# another programming language without prior written consent of the author.
+#
+#
+#
+################################################################################
+"""
+
 from datetime import datetime, timedelta
 from bson.objectid import ObjectId
 from dateutil.relativedelta import relativedelta
