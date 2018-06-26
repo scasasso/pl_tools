@@ -25,6 +25,10 @@ from pymongo.mongo_client import MongoClient
 from datetime import timedelta, datetime
 from pytz import timezone
 import pandas as pd
+import numpy as np
+import logging
+
+logger = logging.getLogger(__file__)
 
 
 def get_day_saving_time_day(tz='Europe/Paris', year=2018):
@@ -57,14 +61,14 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
     allowed_inexcess_pol = ['raise', 'slice']
 
     if verbose > 1:
-        print ' Database instance:\n%s' % str(db)
+        logger.info(' Database instance:\n%s' % str(db))
 
     if verbose > 0:
-        print 'Will fetch collection {coll} from {start} to end {end}.' \
-              '\nAdditional query parameters {add_query}'.format(coll=coll_name,
-                                                                 start=date_start.strftime('%Y-%m-%d'),
-                                                                 end=date_end.strftime('%Y-%m-%d'),
-                                                                 add_query=add_query)
+        logger.info('Will fetch collection {coll} from {start} to end {end}.' \
+                    '\nAdditional query parameters {add_query}'.format(coll=coll_name,
+                                                                       start=date_start.strftime('%Y-%m-%d'),
+                                                                       end=date_end.strftime('%Y-%m-%d'),
+                                                                       add_query=add_query))
     # Get collection
     collection = db[coll_name]
 
@@ -81,13 +85,13 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
     query = {"$and": and_list}
 
     if verbose > 1:
-        print ' Total query:\n%s' % str(query)
+        logger.info(' Total query:\n%s' % str(query))
 
     dates, vals = [], []
     res = collection.find(query).sort(date_field, 1)
 
     if verbose > 0:
-        print 'Found {0} results'.format(res.count())
+        logger.info('Found {0} results'.format(res.count()))
     for row in res:
 
         dt = row[date_field]
@@ -109,6 +113,9 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
         datetimes = pd.date_range(start=dt,
                                   end=dt + timedelta(hours=23) + timedelta(minutes=59) + timedelta(seconds=59),
                                   freq=granularity)
+        if not len(values) > 0:
+            logger.info('For day %s values is an empty list. It will be filled with NaNs' % dt)
+            values = [np.nan] * len(datetimes)
         if h_to_clone is not None:
             datetimes_l = datetimes.tolist()
             dts_to_clone = [d for d in datetimes_l if d.hour == h_to_clone]
