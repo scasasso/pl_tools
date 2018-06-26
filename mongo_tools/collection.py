@@ -21,7 +21,6 @@
 ################################################################################
 """
 
-import pandas as pd
 from pymongo.mongo_client import MongoClient
 from pymongo.errors import ConnectionFailure
 import logging
@@ -93,15 +92,7 @@ class Collection(object):
     def close(self):
         self.client.close()
 
-    def _get_data(self, **kwargs):
-
-        try:
-            dt_start = kwargs['dt_start']
-            dt_end = kwargs['dt_end']
-        except KeyError:
-            msg = 'You must specify \"dt_start\" and \"dt_end\" arguments'
-            logger.error(msg)
-            raise KeyError(msg)
+    def _get_data(self, dt_start, dt_end, **kwargs):
 
         self.data = get_daily_ts(self.conn, self.name, dt_start, dt_end,
                                  date_field=self.field_day, value_field=self.field_value,
@@ -116,9 +107,9 @@ class Collection(object):
 
         return
 
-    def get_data(self, **kwargs):
+    def get_data(self, dt_start, dt_end, **kwargs):
         self.connect()
-        self._get_data(**kwargs)
+        self._get_data(dt_start, dt_end, **kwargs)
         # self.close()  # works from version 3.6.0
 
         return self.data.copy()
