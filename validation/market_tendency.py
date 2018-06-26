@@ -90,27 +90,11 @@ class MarketTendencyValidator(object):
                 logger.error(msg)
                 raise ValueError(msg)
 
-        def default_aggregator(ps):
-            preds_h = []
-            for p in ps:
-                if p < thr_low:
-                    preds_h.append(-1)
-                elif p < thr:
-                    preds_h.append(0)
-                else:
-                    preds_h.append(1)
-
-            pred_mean = np.mean(preds_h)
-
-            if pred_mean == 0.:
-                return 0
-            elif pred_mean > 0.:
-                return 1
-            else:
-                return -1
+        def default_agg(ps):
+            return default_aggregator(ps, thr, thr_low)
 
         if agg_pred is None:
-            agg_pred = default_aggregator
+            agg_pred = default_agg
 
         # Fetch the data
         if not len(self.df_input) > 0:
@@ -124,26 +108,16 @@ class MarketTendencyValidator(object):
             logger.warning('You are trying to skip dates which are not in index')
             pass
 
-        # Market tendency
+        # Input collections
         self.df_val = self.df_input.copy()
-        self.df_val['imbalance_price'] = self.df_val[['positive_price', 'negative_price']].mean(axis=1).round(3)
-        self.df_val['price_diff'] = (self.df_val['imbalance_price'] - self.df_val['dayahead_price']).round(3)
-        self.df_val['price_diff_pos'] = (self.df_val['positive_price'] - self.df_val['dayahead_price']).round(3)
-        self.df_val['price_diff_neg'] = (self.df_val['negative_price'] - self.df_val['dayahead_price']).round(3)
-        self.df_val['market_tendency'] = np.sign(self.df_val['price_diff'].fillna(0.)).astype(int)
+
+        # Add the market tendency
+        self.df_val = add_market_tendency(self.df_val)
 
         # Get hour aggregates
         self.df_val['threshold'] = thr
         self.df_val['threshold_low'] = thr_low
-        self.df_val['pl_pred'] = self.df_val['prob'].groupby(pd.Grouper(freq=self.da_coll.freq)).\
-            agg(agg_pred).astype(int).reindex(index=self.df_val.index, method='ffill')
-        self.df_val['pl_pred_str'] = self.df_val.apply(lambda x: 'short' if x['pl_pred'] == 1 else 'long' if x['pl_pred'] == -1 else 'none', axis=1)
-        self.df_val['frac_pos'] = ((self.df_val['pl_pred'] != 0).astype(int).cumsum() / self.df_val['pl_pred'].expanding(min_periods=1).count()).round(3)
-
-        # Are we correct?
-        self.df_val['pl_correct'] = (self.df_val['pl_pred'] == self.df_val['market_tendency']).astype('int8')
-        self.df_val['pl_correct'] = self.df_val['pl_correct'].replace(0, -1)
-        self.df_val.loc[self.df_val['pl_pred'] == 0, 'pl_correct'] = 0
+        self.df_val = add_agg_positions(self.df_val, agg_pred, self.da_coll.freq)
 
         # Compute the cost/gain
         if use_avg_price is True:
@@ -151,23 +125,10 @@ class MarketTendencyValidator(object):
         else:  # if pred == 0 we don't care about the imbalance price anyway
             self.df_val['imbalance_price'] = self.df_val.apply(lambda x: x['positive_price'] if x['pl_pred'] == 1 else x['negative_price'], axis=1)
         self.df_val['price_diff'] = (self.df_val['imbalance_price'] - self.df_val['dayahead_price']).round(3)
-        self.df_val['gain'] = ((self.df_val['pl_pred'] * self.df_val['price_diff']) / 4.).round(3)
-        self.df_val['gain_cum'] = self.df_val['gain'].cumsum().round(3)
-        self.df_val['gain_per_pos'] = (self.df_val['gain_cum'] / (self.df_val['pl_pred'] != 0).cumsum()).round(3)
-        self.df_val['accuracy'] = ((self.df_val['pl_correct'] == 1).astype('int8').cumsum().astype(float) / (self.df_val['pl_pred'] != 0).cumsum()).round(3).fillna(0.5)
-        self.df_val['rocauc'] = round(roc_auc_score(self.df_val['price_diff'].map(lambda x: 1 if x >= 0 else 0).values,
-                                                    self.df_val['prob'].values), 3)
+        self.df_val = compute_perfomances(self.df_val)
 
-        # Compute the hourly statistics
-        df_h = self.df_val[['dayahead_price', 'imbalance_price']].groupby(pd.Grouper(freq='1H')).agg(np.mean)
-        df_h['price_diff'] = df_h['imbalance_price'] - df_h['dayahead_price']
-        df_h['market_tendency'] = np.sign(df_h['price_diff'].fillna(-10.)).astype(int)
-        df_h = df_h.loc[df_h['market_tendency'] > -10, :]
-        df_h['pl_pred'] = self.df_val['pl_pred']
-        df_h['pl_correct'] = (df_h['pl_pred'] == df_h['market_tendency']).astype('int8')
-        df_h['pl_correct'] = df_h['pl_correct'].replace(0, -1)
-        df_h.loc[df_h['pl_pred'] == 0, 'pl_correct'] = 0
-        df_h['accuracy'] = ((df_h['pl_correct'] == 1).astype('int8').cumsum().astype(float) / (df_h['pl_pred'] != 0).cumsum()).round(3).fillna(0.5)
+        # Get aggregate hourly statistics
+        df_h = get_hourly_stats(self.df_val)
 
         # Add to the original DataFrame
         self.df_val['accuracy_h'] = df_h['accuracy'].reindex(index=self.df_val.index, method='ffill')
@@ -255,6 +216,120 @@ class MarketTendencyValidator(object):
         # Cleanup
         del df_best
         gc.collect()
+
+
+def add_market_tendency(df):
+    # Input check
+    cols = ['positive_price', 'negative_price', 'dayahead_price']
+    for col in cols:
+        if col not in df.columns:
+            msg = 'Column %s is not in DataFrame' % col
+            logger.error(msg)
+            raise ValueError(msg)
+
+    # Do not write on input object
+    _df = df.copy()
+
+    # We use the average price to compute the tendency
+    _df['imbalance_price'] = _df[['positive_price', 'negative_price']].mean(axis=1).round(3)
+    _df['price_diff'] = (_df['imbalance_price'] - _df['dayahead_price']).round(3)
+    _df['price_diff_pos'] = (_df['positive_price'] - _df['dayahead_price']).round(3)
+    _df['price_diff_neg'] = (_df['negative_price'] - _df['dayahead_price']).round(3)
+    _df['market_tendency'] = np.sign(_df['price_diff'].fillna(0.)).astype(int)
+
+    return _df
+
+
+def add_agg_positions(df, aggfunc=None, da_freq='1H'):
+    # Input check
+    cols = ['prob']
+    for col in cols:
+        if col not in df.columns and not(col == 'prob' and 'pl_pred' in df.columns):
+            msg = 'Column %s is not in DataFrame' % col
+            logger.error(msg)
+            raise ValueError(msg)
+
+    # Do not write on input object
+    _df = df.copy()
+
+    # More check
+    if not (aggfunc is None and 'pl_pred' in df.columns):
+        # Aggregate the predictions
+        _df['pl_pred'] = _df['prob'].groupby(pd.Grouper(freq=da_freq)). \
+            agg(aggfunc).astype(int).reindex(index=_df.index, method='ffill')
+
+    _df['pl_pred_str'] = _df.apply(
+        lambda x: 'short' if x['pl_pred'] == 1 else 'long' if x['pl_pred'] == -1 else 'none', axis=1)
+    _df['frac_pos'] = ((_df['pl_pred'] != 0).astype(int).cumsum() / _df['pl_pred'].expanding(
+        min_periods=1).count()).round(3)
+
+    return _df
+
+
+def compute_perfomances(df):
+    # Input check
+    cols = ['pl_pred', 'price_diff', 'market_tendency']
+    for col in cols:
+        if col not in df.columns:
+            msg = 'Column %s is not in DataFrame' % col
+            logger.error(msg)
+            raise ValueError(msg)
+
+    # Do not write on input object
+    _df = df.copy()
+
+    # You can always add more
+    _df['pl_correct'] = (_df['pl_pred'] == _df['market_tendency']).astype('int8')
+    _df['pl_correct'] = _df['pl_correct'].replace(0, -1)
+    _df.loc[_df['pl_pred'] == 0, 'pl_correct'] = 0
+    _df['gain'] = ((_df['pl_pred'] * _df['price_diff']) / 4.).round(3)
+    _df['gain_cum'] = _df['gain'].cumsum().round(3)
+    _df['gain_per_pos'] = (_df['gain_cum'] / (_df['pl_pred'] != 0).cumsum()).round(3)
+    _df['accuracy'] = ((_df['pl_correct'] == 1).astype('int8').cumsum().astype(float) / (
+                _df['pl_pred'] != 0).cumsum()).round(3).fillna(0.5)
+    if 'prob' in _df.columns:
+        _df['rocauc'] = round(roc_auc_score(_df['price_diff'].map(lambda x: 1 if x >= 0 else 0).values,
+                                            _df['prob'].values), 3)
+    else:
+        _df['rocauc'] = np.nan
+
+    return _df
+
+
+def get_hourly_stats(df):
+    # Compute the hourly statistics
+    df_h = df[['dayahead_price', 'imbalance_price']].groupby(pd.Grouper(freq='1H')).agg(np.mean)
+    df_h['price_diff'] = df_h['imbalance_price'] - df_h['dayahead_price']
+    df_h['market_tendency'] = np.sign(df_h['price_diff'].fillna(-10.)).astype(int)
+    df_h = df_h.loc[df_h['market_tendency'] > -10, :]
+    df_h['pl_pred'] = df['pl_pred']
+    df_h['pl_correct'] = (df_h['pl_pred'] == df_h['market_tendency']).astype('int8')
+    df_h['pl_correct'] = df_h['pl_correct'].replace(0, -1)
+    df_h.loc[df_h['pl_pred'] == 0, 'pl_correct'] = 0
+    df_h['accuracy'] = ((df_h['pl_correct'] == 1).astype('int8').cumsum().astype(float) / (
+                df_h['pl_pred'] != 0).cumsum()).round(3).fillna(0.5)
+
+    return df_h
+
+
+def default_aggregator(ps, thr, thr_low):
+    preds_h = []
+    for p in ps:
+        if p < thr_low:
+            preds_h.append(-1)
+        elif p < thr:
+            preds_h.append(0)
+        else:
+            preds_h.append(1)
+
+    pred_mean = np.mean(preds_h)
+
+    if pred_mean == 0.:
+        return 0
+    elif pred_mean > 0.:
+        return 1
+    else:
+        return -1
 
 
 class MarketTendencyPlotter(object):
