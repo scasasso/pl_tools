@@ -72,7 +72,7 @@ class MarketTendencyValidator(object):
         # Concatenate
         df = pd.concat([df_da, df_pos, df_neg, df_scores], axis=1)
 
-        return df.copy()
+        return df.dropna()
 
     def produce_validation(self, dt_start, dt_end, thr, thr_low=None, agg_pred=None, use_avg_price=True, skip_dates=None):
         # Default
@@ -303,7 +303,7 @@ class MarketTendencyPlotter(object):
 
     def plot_ts_group(self, what, group='1D', func=np.sum, **kwargs):
 
-        xs = self.df_val[0].groupby(pd.Grouper(freq=group)).agg(lambda x: x[0]).index
+        xs = self.df_val[0].groupby(pd.Grouper(freq=group)).mean().index
         fname = 'ts_' + what + '_group' + str(group)
 
         ys, titles = [], []
