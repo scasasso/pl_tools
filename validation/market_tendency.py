@@ -137,7 +137,7 @@ class MarketTendencyValidator(object):
         self.df_val['threshold_low'] = thr_low
         self.df_val['pl_pred'] = self.df_val['prob'].groupby(pd.Grouper(freq=self.da_coll.freq)).\
             agg(agg_pred).astype(int).reindex(index=self.df_val.index, method='ffill')
-        self.df_val['pl_pred_str'] = self.df_val.apply(lambda x: 'short' if x['pl_pred'] == 1 else 'long' if x['pl_pred'] == -1 else 'none', axis=1)
+        self.df_val['pl_pred_str'] = self.df_val.apply(lambda x: 'short' if x['pl_pred'] > 0 else 'long' if x['pl_pred'] < 0 else 'none', axis=1)
         self.df_val['frac_pos'] = ((self.df_val['pl_pred'] != 0).astype(int).cumsum() / self.df_val['pl_pred'].expanding(min_periods=1).count()).round(3)
 
         # Are we correct?
