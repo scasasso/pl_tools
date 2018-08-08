@@ -280,7 +280,7 @@ def compute_perfomances(df):
     _df = df.copy()
 
     # You can always add more
-    _df['pl_correct'] = (_df['pl_pred'] == _df['market_tendency']).astype('int8')
+    _df['pl_correct'] = (np.sign(_df['pl_pred']).astype(int) == np.sign(_df['market_tendency']).astype(int)).astype('int8')
     _df['pl_correct'] = _df['pl_correct'].replace(0, -1)
     _df.loc[_df['pl_pred'] == 0, 'pl_correct'] = 0
     _df['gain'] = ((_df['pl_pred'] * _df['price_diff']) / 4.).round(3)
