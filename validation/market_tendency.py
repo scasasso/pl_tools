@@ -260,7 +260,7 @@ def add_agg_positions(df, aggfunc=None, da_freq='1H'):
             agg(aggfunc).astype(int).reindex(index=_df.index, method='ffill')
 
     _df['pl_pred_str'] = _df.apply(
-        lambda x: 'short' if x['pl_pred'] == 1 else 'long' if x['pl_pred'] == -1 else 'none', axis=1)
+        lambda x: 'short' if x['pl_pred'] > 0 else 'long' if x['pl_pred'] < 0 else 'none', axis=1)
     _df['frac_pos'] = ((_df['pl_pred'] != 0).astype(int).cumsum() / _df['pl_pred'].expanding(
         min_periods=1).count()).round(3)
 
