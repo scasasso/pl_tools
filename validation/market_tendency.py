@@ -236,6 +236,7 @@ def add_market_tendency(df):
     _df['price_diff_pos'] = (_df['positive_price'] - _df['dayahead_price']).round(3)
     _df['price_diff_neg'] = (_df['negative_price'] - _df['dayahead_price']).round(3)
     _df['market_tendency'] = np.sign(_df['price_diff'].fillna(0.)).astype(int)
+    _df['market_tendency_str'] = _df.apply(lambda x: 'short' if x['market_tendency'] == 1 else 'long' if x['market_tendency'] == -1 else 'none', axis=1)
 
     return _df
 

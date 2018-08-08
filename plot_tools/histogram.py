@@ -24,10 +24,11 @@
 import os
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 import seaborn as sns
 # sns.set(style="whitegrid", color_codes=True)
 from defines import *
+import matplotlib.pyplot as plt
+plt.switch_backend('agg')
 
 
 def plot_hist_period(s, out_dir, tag='', group='1D', func=np.sum, **kwargs):

@@ -23,10 +23,11 @@
 
 import os
 import numpy as np
-import matplotlib.pyplot as plt
 import plotly.graph_objs as go
 import plotly
 from defines import *
+import matplotlib.pyplot as plt
+plt.switch_backend('agg')
 
 
 def plot_ts_mpl(x, y, title=None, ylab=None, out_dir='.', color='blue', filename=None, annotate=None, ylim=None):

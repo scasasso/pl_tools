@@ -24,8 +24,9 @@
 import os
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 from defines import *
+import matplotlib.pyplot as plt
+plt.switch_backend('agg')
 
 
 def plot_scan_1d(df, what, out_dir, tag=''):
