@@ -149,7 +149,7 @@ class MarketTendencyValidator(object):
         if use_avg_price is True:
             self.df_val['imbalance_price'] = self.df_val[['positive_price', 'negative_price']].mean(axis=1)
         else:  # if pred == 0 we don't care about the imbalance price anyway
-            self.df_val['imbalance_price'] = self.df_val.apply(lambda x: x['positive_price'] if x['pl_pred'] == 1 else x['negative_price'], axis=1)
+            self.df_val['imbalance_price'] = self.df_val.apply(lambda x: x['positive_price'] if x['pl_pred'] > 0 else x['negative_price'], axis=1)
         self.df_val['price_diff'] = (self.df_val['imbalance_price'] - self.df_val['dayahead_price']).round(3)
         self.df_val['gain'] = ((self.df_val['pl_pred'] * self.df_val['price_diff']) / 4.).round(3)
         self.df_val['gain_cum'] = self.df_val['gain'].cumsum().round(3)
