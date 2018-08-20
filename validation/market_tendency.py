@@ -144,7 +144,7 @@ class MarketTendencyValidator(object):
             self.df_scan.to_csv(os.path.join(out_dir, 'scan.csv'))
 
     def scan(self, eval_metric, min_frac_pos=0., thr_list=None, scan2d=True, plot=False, out_dir=None, **kwargs):
-        metric_v_best = 0. if eval_metric == 'accuracy' else -1.E+06
+        metric_v_best = 0. if eval_metric in ['accuracy', 'accuracy_h'] else -1.E+06
 
         # List of thresholds to loop over
         if thr_list is None:
