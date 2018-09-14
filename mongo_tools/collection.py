@@ -25,9 +25,83 @@ from pymongo.mongo_client import MongoClient
 from pymongo.errors import ConnectionFailure
 import logging
 from mongo_tools.timeseries import *
+from mongo_tools.record import *
 from pymongo.database import Database as mongoDB
 
 logger = logging.getLogger(__file__)
+
+
+class Record(object):
+    def __init__(self, name, db_uri, db_name=None):
+
+        self.name = name
+        self.db_uri = db_uri
+
+        # This means we have already the connection
+        if db_name is None and isinstance(self.db_uri, mongoDB):
+            self.conn = self.db_uri
+            self.db_name = self.conn.name
+            self.client = self.conn.client
+            if not isinstance(self.client, MongoClient):
+                self.client = self.conn.connection  # pymongo 2.8
+            self.db_uri = 'mongodb://%s:%s/' % (self.client.HOST, self.client.PORT)
+        elif db_name is not None:  # will connect later
+            self.db_name = db_name
+            self.client = None
+            self.conn = None
+        else:
+            msg = 'You must provide either valid db_uri and db_name or a valid connection'
+            logger.error(msg)
+            raise AttributeError(msg)
+
+    @classmethod
+    def create_from_external(cls, _dict):
+        try:
+            name = _dict['table']
+            db_uri = _dict['db_uri']
+            db_name = _dict['db_name']
+            return cls(name, db_uri, db_name)
+        except KeyError as e:
+            msg = 'The external doens\'t contain all the keys:\n%s' % str(e)
+            logger.error(msg)
+            raise KeyError(msg)
+
+    def connect(self):
+        if self.conn is not None:
+            return
+
+        try:
+            self.client = MongoClient(self.db_uri)
+            self.conn = self.client[self.db_name]
+        except Exception as e:
+            msg = 'Could not connect to the database due to the following exception:\n%s' % str(e)
+            logger.error(msg)
+            raise ConnectionFailure(msg)
+
+    def close(self):
+        print type(self.client), type(self.conn)
+        self.client.close()
+
+    def _get_data(self, **kwargs):
+
+        self.data = get_record(self.conn, self.name, out_format='dataframe', **kwargs)
+
+        return
+
+    def get_data(self, **kwargs):
+        self.connect()
+        self._get_data(**kwargs)
+        self.close()
+
+        return self.data.copy()
+
+    def put_data(self, s, **kwargs):
+        self.connect()
+        write_record(self.conn, self.name, s, **kwargs)
+        self.close()
+
+    def get_name(self):
+        return self.name
 
 
 class Collection(object):
@@ -41,6 +115,8 @@ class Collection(object):
             self.conn = self.db_uri
             self.db_name = self.conn.name
             self.client = self.conn.client
+            if not isinstance(self.client, MongoClient):
+                self.client = self.conn.connection  # pymongo 2.8
             self.db_uri = 'mongodb://%s:%s/' % (self.client.HOST, self.client.PORT)
         elif db_name is not None:  # will connect later
             self.db_name = db_name
@@ -110,14 +186,14 @@ class Collection(object):
     def get_data(self, dt_start, dt_end, **kwargs):
         self.connect()
         self._get_data(dt_start, dt_end, **kwargs)
-        # self.close()  # works from version 3.6.0
+        self.close()
 
         return self.data.copy()
 
     def put_data(self, s, **kwargs):
         self.connect()
         write_daily_ts(self.conn, self.name, s, self.field_day, self.field_value, add_query=self.add_params, **kwargs)
-        # self.close()
+        self.close()
 
 
 class CollectionND(object):
@@ -131,6 +207,8 @@ class CollectionND(object):
             self.conn = self.db_uri
             self.db_name = self.conn.name
             self.client = self.conn.client
+            if not isinstance(self.client, MongoClient):
+                self.client = self.conn.connection  # pymongo 2.8
             self.db_uri = 'mongodb://%s:%s/' % (self.client.HOST, self.client.PORT)
         elif db_name is not None:  # will connect later
             self.db_name = db_name
@@ -220,7 +298,7 @@ class CollectionND(object):
     def get_data(self, dt_start, dt_end, **kwargs):
         self.connect()
         self._get_data(dt_start, dt_end, **kwargs)
-        # self.close()  # works from version 3.6.0
+        self.close()
 
         return self.data.copy()
 
@@ -229,4 +307,4 @@ class CollectionND(object):
         write_daily_ts(self.conn, self.name, df, date_field=self.field_day, value_field=self.field_value,
                        dfcol=cols,
                        add_query=self.add_params, **kwargs)
-        # self.close()
+        self.close()

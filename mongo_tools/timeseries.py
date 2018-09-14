@@ -50,7 +50,9 @@ def get_gran_from_freq(freq):
         n = int(freq.replace('T', ''))
         return 60 // n
     else:
-        raise ValueError('Don\'t know how to convert frequency %s to granularity' % freq)
+        msg = 'Don\'t know how to convert frequency %s to granularity' % freq
+        logger.error(msg)
+        raise ValueError(msg)
 
 
 def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_field='day', value_field='v',
@@ -80,7 +82,9 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
         elif isinstance(add_query, dict):
             and_list.append(add_query)
         else:
-            raise AttributeError('add_query parameter must be either a list of dict or a dict')
+            msg = 'add_query parameter must be either a list of dict or a dict'
+            logger.error(msg)
+            raise AttributeError(msg)
 
     query = {"$and": and_list}
 
@@ -108,7 +112,7 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
                     h_to_remove = 2
             elif dt == res[1]:
                 h_to_clone = 1
-        
+
         # Build the datetime list
         datetimes = pd.date_range(start=dt,
                                   end=dt + timedelta(hours=23) + timedelta(minutes=59) + timedelta(seconds=59),
@@ -128,9 +132,11 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
 
         if len(datetimes) > len(values):
             if missing_pol == 'raise':
-                raise ValueError('For date {date} found {nf} values instead {ne}'.format(date=dt.strftime('%Y-%m-%d'),
-                                                                                         nf=len(values),
-                                                                                         ne=len(datetimes)))
+                msg = 'For date {date} found {nf} values instead {ne}'.format(date=dt.strftime('%Y-%m-%d'),
+                                                                              nf=len(values),
+                                                                              ne=len(datetimes))
+                logger.error(msg)
+                raise ValueError(msg)
             elif missing_pol == 'pad':
                 if h_to_clone is not None:
                     datetimes_l = datetimes.tolist()
@@ -151,24 +157,31 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
                 elif dt == date_end:
                     datetimes = datetimes[:len(values)]
                 else:
-                    raise ValueError(
-                        'For date {date} found {nf} values instead {ne}'.format(date=dt.strftime('%Y-%m-%d'),
-                                                                                nf=len(values),
-                                                                                ne=len(datetimes)))
+                    msg = 'For date {date} found {nf} values instead {ne}'.format(date=dt.strftime('%Y-%m-%d'),
+                                                                                  nf=len(values),
+                                                                                  ne=len(datetimes))
+                    logger.error(msg)
+                    raise ValueError(msg)
             else:
-                raise NotImplementedError('Unknown policy for missing values: {po}. '
-                                          'Valid ones are:\n {l}'.format(po=inexcess_pol, l=str(allowed_missing_pol)))
+                msg = 'Unknown policy for missing values: {po}. ' \
+                      'Valid ones are:\n {l}'.format(po=missing_pol, l=str(allowed_missing_pol))
+                logger.error(msg)
+                raise NotImplementedError(msg)
 
         if len(datetimes) < len(values):
             if inexcess_pol == 'raise':
-                raise ValueError('For date {date} found {nf} values instead {ne}'.format(date=dt.strftime('%Y-%m-%d'),
-                                                                                         nf=len(values),
-                                                                                         ne=len(datetimes)))
+                msg = 'For date {date} found {nf} values instead {ne}'.format(date=dt.strftime('%Y-%m-%d'),
+                                                                              nf=len(values),
+                                                                              ne=len(datetimes))
+                logger.error(msg)
+                raise ValueError(msg)
             elif inexcess_pol == 'slice':
                 values = values[:len(datetimes)]
             else:
-                raise NotImplementedError('Unknown policy for values in excess: {po}. '
-                                          'Valid ones are:\n {l}'.format(po=inexcess_pol, l=str(allowed_inexcess_pol)))
+                msg = 'Unknown policy for values in excess: {po}. ' \
+                      'Valid ones are:\n {l}'.format(po=inexcess_pol, l=str(allowed_inexcess_pol))
+                logger.error(msg)
+                raise NotImplementedError(msg)
 
         dates.extend(datetimes)
         vals.extend(values)
@@ -183,8 +196,10 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
         df.sort_index(inplace=True)
         return df
     else:
-        raise NotImplementedError('Format {fo} is not supported. '
-                                  'Valid ones are:\n {l}'.format(fo=out_format, l=allowed_out_formats))
+        msg = 'Format {fo} is not supported. ' \
+              'Valid ones are:\n {l}'.format(fo=out_format, l=allowed_out_formats)
+        logger.error(msg)
+        raise NotImplementedError(msg)
 
 
 def get_daily_ts_multi(db, coll_name, date_start, date_end, granularity='1H', date_field='day', value_field=None,
@@ -221,7 +236,9 @@ def get_daily_ts_multi(db, coll_name, date_start, date_end, granularity='1H', da
         elif isinstance(add_query, dict):
             and_list.append(add_query)
         else:
-            raise AttributeError('add_query parameter must be either a list of dict or a dict')
+            msg = 'add_query parameter must be either a list of dict or a dict'
+            logger.error(msg)
+            raise AttributeError(msg)
 
     # Define the queri field
     query = {"$and": and_list}
@@ -276,9 +293,11 @@ def get_daily_ts_multi(db, coll_name, date_start, date_end, granularity='1H', da
 
             if len(datetimes) > len(values):
                 if missing_pol == 'raise':
-                    raise ValueError('For date {date} found {nf} values instead {ne}'.format(date=dt.strftime('%Y-%m-%d'),
-                                                                                             nf=len(values),
-                                                                                             ne=len(datetimes)))
+                    msg = 'For date {date} found {nf} values instead {ne}'.format(date=dt.strftime('%Y-%m-%d'),
+                                                                                  nf=len(values),
+                                                                                  ne=len(datetimes))
+                    logger.error(msg)
+                    raise ValueError(msg)
                 elif missing_pol == 'pad':
                     if h_to_clone is not None:
                         datetimes_l = datetimes.tolist()
@@ -299,24 +318,33 @@ def get_daily_ts_multi(db, coll_name, date_start, date_end, granularity='1H', da
                     elif dt == date_end:
                         datetimes = datetimes[:len(values)]
                     else:
-                        raise ValueError(
-                            'For date {date} found {nf} values instead {ne}'.format(date=dt.strftime('%Y-%m-%d'),
-                                                                                    nf=len(values),
-                                                                                    ne=len(datetimes)))
+                        msg = 'For date {date} found {nf} values instead {ne}'.format(date=dt.strftime('%Y-%m-%d'),
+                                                                                      nf=len(values),
+                                                                                      ne=len(datetimes))
+                        logger.error(msg)
+                        raise ValueError(msg)
                 else:
-                    raise NotImplementedError('Unknown policy for missing values: {po}. '
-                                              'Valid ones are:\n {l}'.format(po=inexcess_pol, l=str(allowed_missing_pol)))
+                    msg = 'Unknown policy for missing values: {po}. ' \
+                          'Valid ones are:\n {l}'.format(po=inexcess_pol,
+                                                         l=str(allowed_missing_pol))
+                    logger.error(msg)
+                    raise NotImplementedError(msg)
 
             if len(datetimes) < len(values):
                 if inexcess_pol == 'raise':
-                    raise ValueError('For date {date} found {nf} values instead {ne}'.format(date=dt.strftime('%Y-%m-%d'),
-                                                                                             nf=len(values),
-                                                                                             ne=len(datetimes)))
+                    msg = 'For date {date} found {nf} values instead {ne}'.format(date=dt.strftime('%Y-%m-%d'),
+                                                                                  nf=len(values),
+                                                                                  ne=len(datetimes))
+                    logger.error(msg)
+                    raise ValueError(msg)
                 elif inexcess_pol == 'slice':
                     values = values[:len(datetimes)]
                 else:
-                    raise NotImplementedError('Unknown policy for values in excess: {po}. '
-                                              'Valid ones are:\n {l}'.format(po=inexcess_pol, l=str(allowed_inexcess_pol)))
+                    msg = 'Unknown policy for values in excess: {po}. ' \
+                          'Valid ones are:\n {l}'.format(po=inexcess_pol,
+                                                         l=str(allowed_inexcess_pol))
+                    logger.error(msg)
+                    raise NotImplementedError(msg)
 
             vals.setdefault(value_f, [])
             vals[value_f].extend(values)
@@ -337,16 +365,21 @@ def get_daily_ts_multi(db, coll_name, date_start, date_end, granularity='1H', da
         df.sort_index(inplace=True)
         return df
     else:
-        raise NotImplementedError('Format {fo} is not supported. '
-                                  'Valid ones are:\n {l}'.format(fo=out_format, l=allowed_out_formats))
+        msg = 'Format {fo} is not supported. ' \
+              'Valid ones are:\n {l}'.format(fo=out_format, l=allowed_out_formats)
+        logger.error(msg)
+        raise NotImplementedError(msg)
 
 
 def write_daily_ts(db, coll_name, df, date_field='day', value_field=None, dfcol=None, add_query=None, add_fields=None):
-
     if dfcol is not None and not isinstance(df, pd.core.frame.DataFrame) and dfcol not in df.columns:
-        raise AttributeError('Column {} is not in the DataFrame'.format(dfcol))
+        msg = 'Column {} is not in the DataFrame'.format(dfcol)
+        logger.error(msg)
+        raise AttributeError(msg)
     elif dfcol is None and not isinstance(df, pd.core.series.Series):
-        raise ValueError('You have either to specify the column you want to write or pass a DataFrame with one column')
+        msg = 'You have either to specify the column you want to write or pass a DataFrame with one column'
+        logger.error(msg)
+        raise ValueError(msg)
 
     # Value field - sanity check
     if value_field is None:
@@ -380,5 +413,5 @@ def write_daily_ts(db, coll_name, df, date_field='day', value_field=None, dfcol=
 
         # Write to DB
         db[coll_name].update(query, {'$set': out_dict}, upsert=True)
-        
+
     return

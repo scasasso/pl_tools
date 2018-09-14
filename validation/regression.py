@@ -124,7 +124,7 @@ class RegressionValidator(object):
 
 
 class RegressionPlotter(object):
-    def __init__(self, df, out_dir, labels=None, plot_blend=True):
+    def __init__(self, df, out_dir, labels=None, target_label='target', plot_blend=True):
 
         # Data can come as Dataframe directly or as csv file
         if isinstance(df, pd.core.frame.DataFrame):
@@ -132,14 +132,18 @@ class RegressionPlotter(object):
         else:
             self.df_val = pd.read_csv(df, index_col=0, parse_dates=[0])
 
+        # Label for target collection
+        self.target_label = target_label
+        self.df_val = self.df_val.rename({'target': self.target_label}, axis=1)
+
         # Sanity check
-        if not ('target' in self.df_val.columns and len(self.df_val.filter(regex="pred_.*").columns) >= 1):
+        if not (self.target_label in self.df_val.columns and len(self.df_val.filter(regex="pred_.*").columns) >= 1):
             msg = 'A Dataframe with a \"target\" columns with at least one \""pred_X\"" column is expected'
             logger.error(msg)
             raise KeyError(msg)
 
         # Re-order columns
-        self.df_val.columns = ['target'] + [c for c in self.df_val.columns if c != 'target']
+        self.df_val.columns = [self.target_label] + [c for c in self.df_val.columns if c != self.target_label]
 
         # Output directory
         self.out_dir = out_dir
@@ -171,8 +175,8 @@ class RegressionPlotter(object):
 
         ys, titles = [], []
         if 'pred' in what:
-            ys.append(self.df_val['target'])
-            titles.append('target')
+            ys.append(self.df_val[self.target_label])
+            titles.append(self.target_label)
 
         cols_to_plot = [c for c in self.df_val.columns if c.startswith(what + '_')]
         if len(cols_to_plot) != len(self.labels):
@@ -181,7 +185,7 @@ class RegressionPlotter(object):
             logger.error(msg)
             raise ValueError(msg)
         for col, label in zip(cols_to_plot, self.labels):
-            if col.startswith(what) is not True or col == 'target':
+            if col.startswith(what) is not True or col == self.target_label:
                 continue
             titles.append(label)
             if smooth is not None:
