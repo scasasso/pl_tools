@@ -79,7 +79,6 @@ class Record(object):
             raise ConnectionFailure(msg)
 
     def close(self):
-        print type(self.client), type(self.conn)
         self.client.close()
 
     def _get_data(self, **kwargs):

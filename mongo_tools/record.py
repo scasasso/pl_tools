@@ -58,8 +58,6 @@ def get_record(db, coll_name, out_format='dataframe', add_query=None, sort=None,
     else:
         query = {}
 
-    print query
-
     if verbose > 1:
         logger.info(' Total query:\n%s' % str(query))
 
