@@ -289,8 +289,8 @@ def compute_perfomances(df):
     _df['accuracy'] = ((_df['pl_correct'] == 1).astype('int8').cumsum().astype(float) / (
                 _df['pl_pred'] != 0).cumsum()).round(3).fillna(0.5)
     if 'prob' in _df.columns:
-        _df['rocauc'] = round(roc_auc_score(_df['price_diff'].map(lambda x: 1 if x >= 0 else 0).values,
-                                            _df['prob'].values), 3)
+        _df['rocauc'] = round(roc_auc_score(_df.loc[_df['price_diff'] != 0., 'price_diff'].map(lambda x: 1 if x > 0 else 0).values,
+                                            _df.loc[_df['price_diff'] != 0., 'prob'].values), 3)
     else:
         _df['rocauc'] = np.nan
 
