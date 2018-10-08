@@ -152,7 +152,7 @@ class PNLValidatorGermany(object):
             self.df_val['imbalance_price'] = self.df_val[['positive_price', 'negative_price']].mean(axis=1)
         else:  # if pred == 0 we don't care about the imbalance price anyway
             self.df_val['imbalance_price'] = self.df_val.apply(
-                lambda x: x['positive_price'] if x['pl_pred'] > 0 else x['negative_price'], axis=1)
+                lambda x: x['positive_price'] if x['pl_pred'] > 0 else x['negative_price'] if x['pl_pred'] < 0 else x.get('dayahead_price', np.nan), axis=1)
         self.df_val['price_diff'] = (self.df_val['imbalance_price'] - self.df_val['dayahead_price']).round(3)
         self.df_val = compute_perfomances(self.df_val)
 
@@ -232,12 +232,8 @@ class PNLValidatorBelgium(object):
         self.df_val = self.df_input.copy()
 
         # Fill missing prices with price estimate
-        self.df_val['positive_price'] = self.df_val.apply(
-            lambda x: x.get('positive_price', None) if not pd.isnull(x.get('positive_price', None)) else x.get(
-                'positive_price_pl', None), axis=1)
-        self.df_val['negative_price'] = self.df_val.apply(
-            lambda x: x.get('negative_price', None) if not pd.isnull(x.get('negative_price', None)) else x.get(
-                'negative_price_pl', None), axis=1)
+        self.df_val['positive_price'] = self.df_val.apply(lambda x: x.get('positive_price', None), axis=1)
+        self.df_val['negative_price'] = self.df_val.apply(lambda x: x.get('negative_price', None), axis=1)
 
         # Add the market tendency
         self.df_val = add_market_tendency(self.df_val)
@@ -251,7 +247,7 @@ class PNLValidatorBelgium(object):
             self.df_val['imbalance_price'] = self.df_val[['positive_price', 'negative_price']].mean(axis=1)
         else:  # if pred == 0 we don't care about the imbalance price anyway
             self.df_val['imbalance_price'] = self.df_val.apply(
-                lambda x: x['positive_price'] if x['pl_pred'] > 0 else x['negative_price'], axis=1)
+                lambda x: x['positive_price'] if x['pl_pred'] > 0 else x['negative_price'] if x['pl_pred'] < 0 else x.get('dayahead_price', np.nan), axis=1)
         self.df_val['price_diff'] = (self.df_val['imbalance_price'] - self.df_val['dayahead_price']).round(3)
         self.df_val = compute_perfomances(self.df_val)
 

@@ -123,7 +123,7 @@ class MarketTendencyValidator(object):
         if use_avg_price is True:
             self.df_val['imbalance_price'] = self.df_val[['positive_price', 'negative_price']].mean(axis=1)
         else:  # if pred == 0 we don't care about the imbalance price anyway
-            self.df_val['imbalance_price'] = self.df_val.apply(lambda x: x['positive_price'] if x['pl_pred'] == 1 else x['negative_price'], axis=1)
+            self.df_val['imbalance_price'] = self.df_val.apply(lambda x: x['positive_price'] if x['pl_pred'] > 0 else x['negative_price'] if x['pl_pred'] < 0 else x.get('dayahead_price', np.nan), axis=1)
         self.df_val['price_diff'] = (self.df_val['imbalance_price'] - self.df_val['dayahead_price']).round(3)
         self.df_val = compute_perfomances(self.df_val)
 
@@ -236,7 +236,7 @@ def add_market_tendency(df):
     _df['price_diff_pos'] = (_df['positive_price'] - _df['dayahead_price']).round(3)
     _df['price_diff_neg'] = (_df['negative_price'] - _df['dayahead_price']).round(3)
     _df['market_tendency'] = np.sign(_df['price_diff'].fillna(0.)).astype(int)
-    _df['market_tendency_str'] = _df.apply(lambda x: 'short' if x['market_tendency'] == 1 else 'long' if x['market_tendency'] == -1 else 'none', axis=1)
+    _df['market_tendency_str'] = _df.apply(lambda x: 'short' if x['market_tendency'] > 0 else 'long' if x['market_tendency'] < 0 else 'none', axis=1)
 
     return _df
 
@@ -260,7 +260,7 @@ def add_agg_positions(df, aggfunc=None, da_freq='1H'):
             agg(aggfunc).astype(int).reindex(index=_df.index, method='ffill')
 
     _df['pl_pred_str'] = _df.apply(
-        lambda x: 'short' if x['pl_pred'] > 0 else 'long' if x['pl_pred'] < 0 else 'none', axis=1)
+        lambda x: 'short' if x['pl_pred'] < 0 else 'long' if x['pl_pred'] > 0 else 'none', axis=1)
     _df['frac_pos'] = ((_df['pl_pred'] != 0).astype(int).cumsum() / _df['pl_pred'].expanding(
         min_periods=1).count()).round(3)
 
@@ -286,8 +286,7 @@ def compute_perfomances(df):
     _df['gain'] = ((_df['pl_pred'] * _df['price_diff']) / 4.).round(3)
     _df['gain_cum'] = _df['gain'].cumsum().round(3)
     _df['gain_per_pos'] = (_df['gain_cum'] / (_df['pl_pred'] != 0).cumsum()).round(3)
-    _df['accuracy'] = ((_df['pl_correct'] == 1).astype('int8').cumsum().astype(float) / (
-                _df['pl_pred'] != 0).cumsum()).round(3).fillna(0.5)
+    _df['accuracy'] = ((_df['pl_correct'] == 1).astype('int8').cumsum().astype(float) / ((_df['pl_pred'] != 0) & (_df['pl_correct'] != 0)).cumsum()).round(3).fillna(0.5)
     if 'prob' in _df.columns:
         _df['rocauc'] = round(roc_auc_score(_df.loc[_df['price_diff'] != 0., 'price_diff'].map(lambda x: 1 if x > 0 else 0).values,
                                             _df.loc[_df['price_diff'] != 0., 'prob'].values), 3)
@@ -299,16 +298,9 @@ def compute_perfomances(df):
 
 def get_hourly_stats(df):
     # Compute the hourly statistics
-    df_h = df[['dayahead_price', 'imbalance_price']].groupby(pd.Grouper(freq='1H')).agg(np.mean)
-    df_h['price_diff'] = df_h['imbalance_price'] - df_h['dayahead_price']
-    df_h['market_tendency'] = np.sign(df_h['price_diff'].fillna(-10.)).astype(int)
-    df_h = df_h.loc[df_h['market_tendency'] > -10, :]
-    df_h['pl_pred'] = df['pl_pred']
-    df_h['pl_correct'] = (df_h['pl_pred'] == df_h['market_tendency']).astype('int8')
-    df_h['pl_correct'] = df_h['pl_correct'].replace(0, -1)
-    df_h.loc[df_h['pl_pred'] == 0, 'pl_correct'] = 0
-    df_h['accuracy'] = ((df_h['pl_correct'] == 1).astype('int8').cumsum().astype(float) / (
-                df_h['pl_pred'] != 0).cumsum()).round(3).fillna(0.5)
+    df_h = df[['pl_correct', 'pl_pred']].groupby(pd.Grouper(freq='1H')).agg({'pl_correct': np.mean, 'pl_pred': lambda x: np.sign(x[0])})
+    df_h['pl_correct'] = df_h['pl_correct'].map(np.sign).astype('int8')
+    df_h['accuracy'] = ((df_h['pl_correct'] == 1).astype('int8').cumsum().astype(float) / ((df_h['pl_pred'] != 0) & (df_h['pl_correct'] != 0)).cumsum()).round(3).fillna(0.5)
 
     return df_h
 
