@@ -218,6 +218,22 @@ class MarketTendencyValidator(object):
         gc.collect()
 
 
+def get_freq_from_df(df):
+    freq = pd.infer_freq(df.index)
+    if freq == 'H' or freq == '1H' or freq == '60T':
+        gran = 1
+    elif freq == '30T' or freq == '0.5H':
+        gran = 2
+    elif freq == '15T' or freq == '0.25H':
+        gran = 4
+    else:
+        msg = 'It was not possible to infer the time granularity: check the DataFrame!'
+        logger.error(msg)
+        raise ValueError(msg)
+
+    return freq, gran
+
+
 def add_market_tendency(df):
     # Input check
     cols = ['positive_price', 'negative_price', 'dayahead_price']
@@ -279,11 +295,14 @@ def compute_perfomances(df):
     # Do not write on input object
     _df = df.copy()
 
+    # Get frequency
+    freq, gran = get_freq_from_df(_df)
+
     # You can always add more
     _df['pl_correct'] = (np.sign(_df['pl_pred']).astype(int) == np.sign(_df['market_tendency']).astype(int)).astype('int8')
     _df['pl_correct'] = _df['pl_correct'].replace(0, -1)
     _df.loc[_df['pl_pred'] == 0, 'pl_correct'] = 0
-    _df['gain'] = ((_df['pl_pred'] * _df['price_diff']) / 4.).round(3)
+    _df['gain'] = ((_df['pl_pred'] * _df['price_diff']) / gran).round(3)
     _df['gain_cum'] = _df['gain'].cumsum().round(3)
     _df['gain_per_pos'] = (_df['gain_cum'] / (_df['pl_pred'] != 0).cumsum()).round(3)
     _df['accuracy'] = ((_df['pl_correct'] == 1).astype('int8').cumsum().astype(float) / ((_df['pl_pred'] != 0) & (_df['pl_correct'] != 0)).cumsum()).round(3).fillna(0.5)
