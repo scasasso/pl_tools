@@ -387,6 +387,9 @@ def write_daily_ts(db, coll_name, df, date_field='day', value_field=None, dfcol=
     elif isinstance(value_field, str) and isinstance(dfcol, str):
         value_field = [value_field]
         dfcol = [dfcol]
+    elif isinstance(value_field, str):
+        value_field = [value_field]
+
     if dfcol is not None and not (isinstance(value_field, list) and isinstance(dfcol, list)):
         msg = 'For multiple keys both value_field and dfcol must be a list'
         logger.error(msg)
