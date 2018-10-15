@@ -27,7 +27,7 @@ import logging
 import pandas as pd
 import numpy as np
 from validation.market_tendency import get_hourly_stats, add_agg_positions, add_market_tendency, \
-    compute_perfomances, default_aggregator
+    compute_perfomances, default_aggregator, compute_cost
 
 logger = logging.getLogger(__file__)
 
@@ -259,6 +259,85 @@ class PNLValidatorBelgium(object):
 
         del df_h
         gc.collect()
+
+        return self.df_val.copy()
+
+    def dump(self, out_dir):
+        self.df_val.to_csv(os.path.join(out_dir, 'validation.csv'))
+
+
+class PNLValidatorPortfolio(object):
+    def __init__(self, name, da_coll, pos_coll, neg_coll, pred_coll, real_coll, coeff=1.):
+        self.name = name
+        self.da_coll = da_coll
+        self.pos_coll = pos_coll
+        self.neg_coll = neg_coll
+        self.pred_coll = pred_coll
+        self.real_coll = real_coll
+
+        self.df_input = pd.DataFrame()
+        self.df_val = pd.DataFrame()
+
+    def _fetch(self, dt_start, dt_end):
+        # Positive price
+        df_pos = self.pos_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='positive_price')
+
+        # Negative price
+        df_neg = self.neg_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='negative_price')
+
+        # Day-ahead price
+        df_da = self.da_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='dayahead_price')
+        df_da = df_da.reindex(index=df_pos.index, method='ffill')
+
+        # Predictions
+        df_preds = self.pred_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='pl_pred')
+
+        # Real
+        df_real = self.real_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='real')
+
+        # Concatenate
+        df = pd.concat([df_da, df_pos, df_neg, df_preds, df_real], axis=1)
+
+        return df.dropna(how='any')
+
+    def produce_validation(self, dt_start, dt_end, skip_dates=None):
+        # Default
+        if skip_dates is None:
+            skip_dates = []
+        for i, d in enumerate(skip_dates):
+            try:
+                skip_dates[i] = pd.Timestamp(d)
+            except Exception as e:
+                msg = 'Problem in converting datetime %s, got following exception:\n%s' % (d, str(e))
+                logger.error(msg)
+                raise ValueError(msg)
+
+        # Fetch the data
+        if not len(self.df_input) > 0:
+            self.df_input = self._fetch(dt_start, dt_end)
+            self.df_input['name'] = self.name
+
+        # Eventually drop dates
+        try:
+            self.df_input = self.df_input.drop(skip_dates)
+        except ValueError:
+            logger.warning('You are trying to skip dates which are not in index')
+            pass
+
+        # Input collections
+        self.df_val = self.df_input.copy()
+
+        # Fill missing prices with price estimate
+        self.df_val['positive_price'] = self.df_val.apply(lambda x: x['positive_price'], axis=1)
+        self.df_val['negative_price'] = self.df_val.apply(lambda x: x['negative_price'], axis=1)
+
+        # Add the market tendency
+        self.df_val = add_market_tendency(self.df_val)
+
+        # Compute the cost/gain
+        self.df_val['imbalance_price'] = self.df_val.apply(lambda x: x['positive_price'] if x['pl_pred'] >= x['real'] else x['negative_price'], axis=1)
+        self.df_val['price_diff'] = (self.df_val['imbalance_price'] - self.df_val['dayahead_price']).round(3)
+        self.df_val = compute_cost(self.df_val)
 
         return self.df_val.copy()
 
