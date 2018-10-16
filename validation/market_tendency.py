@@ -344,7 +344,7 @@ def default_aggregator(ps, thr, thr_low):
         return -1
 
 
-def compute_cost(df, coeff=1.):
+def compute_cost(df, mult=1.):
     # Input check
     cols = ['pl_pred', 'price_diff', 'real']
     for col in cols:
@@ -356,8 +356,12 @@ def compute_cost(df, coeff=1.):
     # Do not write on input object
     _df = df.copy()
 
+    # Get frequency
+    freq, gran = get_freq_from_df(_df)
+
     # You can always add more
-    _df['cost'] = (((_df['real'] - _df['pl_pred']) * _df['price_diff']) / coeff).round(3)
+    _df['imbalance'] = _df['real'] - _df['pl_pred']
+    _df['cost'] = mult * ((_df['imbalance'] * _df['price_diff']) / gran).round(3)
     _df['cost_cum'] = _df['cost'].cumsum().round(3)
 
     return _df

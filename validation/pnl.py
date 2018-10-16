@@ -267,13 +267,32 @@ class PNLValidatorBelgium(object):
 
 
 class PNLValidatorPortfolio(object):
-    def __init__(self, name, da_coll, pos_coll, neg_coll, pred_coll, real_coll, coeff=1.):
+    def __init__(self, name, da_coll, pos_coll, neg_coll, pred_coll, real_coll, cost_mult=1.):
         self.name = name
         self.da_coll = da_coll
         self.pos_coll = pos_coll
         self.neg_coll = neg_coll
-        self.pred_coll = pred_coll
-        self.real_coll = real_coll
+
+        # Get reals
+        if isinstance(real_coll, list):
+            self.real_coll = real_coll
+        else:
+            self.real_coll = [real_coll]
+
+        # Get forecasts
+        if isinstance(pred_coll, list):
+            self.pred_coll = pred_coll
+        else:
+            self.pred_coll = [pred_coll]
+
+        # Sanity check
+        if len(self.pred_coll) != len(self.real_coll):
+            msg = 'pred_coll and real_coll must have the same length! {0} {1}'.format(len(self.pred_coll), len(self.real_coll))
+            logger.error(msg)
+            raise ValueError(msg)
+
+        # Multiplier of the cost (in case prices and energy are not in the coherent units)
+        self.cost_mult = cost_mult
 
         self.df_input = pd.DataFrame()
         self.df_val = pd.DataFrame()
@@ -290,13 +309,19 @@ class PNLValidatorPortfolio(object):
         df_da = df_da.reindex(index=df_pos.index, method='ffill')
 
         # Predictions
-        df_preds = self.pred_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='pl_pred')
+        dfs_preds = []
+        for coll in self.pred_coll:
+            dfs_preds.append(coll.get_data(dt_start=dt_start, dt_end=dt_end, rename=coll.name))
+        df_preds = pd.concat(dfs_preds, axis=1)
 
-        # Real
-        df_real = self.real_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='real')
+        # Reals
+        dfs_reals = []
+        for coll in self.real_coll:
+            dfs_reals.append(coll.get_data(dt_start=dt_start, dt_end=dt_end, rename=coll.name))
+        df_reals = pd.concat(dfs_reals, axis=1)
 
         # Concatenate
-        df = pd.concat([df_da, df_pos, df_neg, df_preds, df_real], axis=1)
+        df = pd.concat([df_da, df_pos, df_neg, df_preds, df_reals], axis=1)
 
         return df.dropna(how='any')
 
@@ -331,13 +356,19 @@ class PNLValidatorPortfolio(object):
         self.df_val['positive_price'] = self.df_val.apply(lambda x: x['positive_price'], axis=1)
         self.df_val['negative_price'] = self.df_val.apply(lambda x: x['negative_price'], axis=1)
 
-        # Add the market tendency
-        self.df_val = add_market_tendency(self.df_val)
+        # # Add the market tendency
+        # self.df_val = add_market_tendency(self.df_val)
+
+        # Aggregate the portfolio
+        self.real_cols = [c.name for c in self.real_coll]
+        self.df_val['real'] = self.df_val[self.real_cols].sum(axis=1)
+        self.pred_cols = [c.name for c in self.pred_coll]
+        self.df_val['pl_pred'] = self.df_val[self.pred_cols].sum(axis=1)
 
         # Compute the cost/gain
         self.df_val['imbalance_price'] = self.df_val.apply(lambda x: x['positive_price'] if x['pl_pred'] >= x['real'] else x['negative_price'], axis=1)
         self.df_val['price_diff'] = (self.df_val['imbalance_price'] - self.df_val['dayahead_price']).round(3)
-        self.df_val = compute_cost(self.df_val)
+        self.df_val = compute_cost(self.df_val, self.cost_mult)
 
         return self.df_val.copy()
 

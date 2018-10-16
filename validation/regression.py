@@ -115,7 +115,7 @@ class RegressionValidator(object):
         self.df_val['MAE_' + tag] = self.df_val['AE_' + tag].expanding(min_periods=1).mean().round(self.round)
         self.df_val['RMSE_' + tag] = np.sqrt(self.df_val['MSE_' + tag].expanding(min_periods=1).mean()).round(self.round)
         self.df_val['R2_' + tag] = (1. - self.df_val['SSres_' + tag] / self.df_val['SStot_' + tag]).replace([np.inf, -np.inf], 0.).round(self.round)
-        self.df_val['MAPE_' + tag] = self.df_val['APE_' + tag].expanding(min_periods=1).mean().round(4)
+        self.df_val['MAPE_' + tag] = self.df_val['APE_' + tag].abs().expanding(min_periods=1).mean().round(4)
 
         self.df_val = self.df_val.drop(['SSres_' + tag, 'SStot_' + tag, 'cum_mean'], axis=1)
 
