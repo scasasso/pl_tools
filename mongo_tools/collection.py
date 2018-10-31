@@ -167,18 +167,18 @@ class Collection(object):
     def close(self):
         self.client.close()
 
-    def _get_data(self, dt_start, dt_end, **kwargs):
+    def _get_data(self, dt_start, dt_end, rename=False, **kwargs):
 
         self.data = get_daily_ts(self.conn, self.name, dt_start, dt_end,
                                  date_field=self.field_day, value_field=self.field_value,
-                                 granularity=self.freq, out_format='dataframe', missing_pol='pad',
+                                 granularity=self.freq, out_format='dataframe', missing_pol='auto',
                                  add_query=self.add_params,
                                  **kwargs)
 
-        if kwargs.get('rename', False) is True:
+        if rename is True:
             self.data = self.data.rename({self.field_value: self.name}, axis=1)
-        elif isinstance(kwargs.get('rename', False), str):
-            self.data = self.data.rename({self.field_value: kwargs['rename']}, axis=1)
+        elif isinstance(rename, str):
+            self.data = self.data.rename({self.field_value: rename}, axis=1)
 
         return
 
@@ -275,7 +275,7 @@ class CollectionND(object):
     def close(self):
         self.client.close()
 
-    def _get_data(self, dt_start, dt_end, **kwargs):
+    def _get_data(self, dt_start, dt_end, rename=None, **kwargs):
 
         self.data = get_daily_ts_multi(self.conn, self.name, dt_start, dt_end,
                                        date_field=self.field_day, value_field=self.field_value,
@@ -283,13 +283,12 @@ class CollectionND(object):
                                        add_query=self.add_params,
                                        **kwargs)
 
-        if kwargs.get('rename', None) is not None:
-            rename_arg = kwargs['rename']
-            if not isinstance(rename_arg, list):
+        if rename is not None:
+            if not isinstance(rename, list):
                 logger.warning('rename parameter is not a list, it will be ignored')
                 pass
             else:
-                rename_dict = {vf: rn for vf, rn in zip(self.field_value, rename_arg)}
+                rename_dict = {vf: rn for vf, rn in zip(self.field_value, rename)}
                 self.data = self.data.rename(rename_dict, axis=1)
 
         return
