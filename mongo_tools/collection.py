@@ -173,7 +173,7 @@ class Collection(object):
                                  date_field=self.field_day, value_field=self.field_value,
                                  granularity=self.freq, out_format='dataframe', missing_pol='pad',
                                  add_query=self.add_params,
-                                 verbose=kwargs.get('verbose', 2))
+                                 **kwargs)
 
         if kwargs.get('rename', False) is True:
             self.data = self.data.rename({self.field_value: self.name}, axis=1)
@@ -281,7 +281,7 @@ class CollectionND(object):
                                        date_field=self.field_day, value_field=self.field_value,
                                        granularity=self.freq, out_format='dataframe', missing_pol='pad',
                                        add_query=self.add_params,
-                                       verbose=kwargs.get('verbose', 2))
+                                       **kwargs)
 
         if kwargs.get('rename', None) is not None:
             rename_arg = kwargs['rename']
