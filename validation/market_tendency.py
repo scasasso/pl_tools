@@ -20,7 +20,7 @@
 #
 ################################################################################
 """
-
+import pytz
 import os
 import gc
 import logging
@@ -41,11 +41,12 @@ METRICS = ['accuracy', 'accuracy_h', 'gain_cum', 'gain_per_pos']
 
 
 class MarketTendencyValidator(object):
-    def __init__(self, name, da_coll, pos_coll, score_coll, neg_coll=None):
+    def __init__(self, name, da_coll, pos_coll, score_coll, neg_coll=None, timezone=None):
         self.name = name
         self.da_coll = da_coll
         self.pos_coll = pos_coll
         self.score_coll = score_coll
+        self.timezone = timezone
         self.df_input = pd.DataFrame()
         self.df_val = pd.DataFrame()
         self.df_scan = pd.DataFrame()
@@ -57,17 +58,17 @@ class MarketTendencyValidator(object):
 
     def _fetch(self, dt_start, dt_end):
         # Positive price
-        df_pos = self.pos_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='positive_price')
+        df_pos = self.pos_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='positive_price', tz=self.timezone)
 
         # Negative price
-        df_neg = self.neg_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='negative_price')
+        df_neg = self.neg_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='negative_price', tz=self.timezone)
 
         # Day-ahead price
-        df_da = self.da_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='dayahead_price')
+        df_da = self.da_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='dayahead_price', tz=self.timezone)
         df_da = df_da.reindex(index=df_pos.index, method='ffill')
 
         # Scores
-        df_scores = self.score_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='prob')
+        df_scores = self.score_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='prob', tz=self.timezone)
 
         # Concatenate
         df = pd.concat([df_da, df_pos, df_neg, df_scores], axis=1)
@@ -103,9 +104,13 @@ class MarketTendencyValidator(object):
 
         # Eventually drop dates
         try:
+            skip_dates = [d.tz_localize(self.timezone) for d in skip_dates]
             self.df_input = self.df_input.drop(skip_dates)
         except ValueError:
             logger.warning('You are trying to skip dates which are not in index')
+            pass
+        except pytz.exceptions.AmbiguousTimeError as e:
+            logger.error('Ambiguity in skip dates (probably due to DST)')
             pass
 
         # Input collections
