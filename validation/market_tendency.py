@@ -312,6 +312,11 @@ def compute_perfomances(df):
     else:
         _df['rocauc'] = np.nan
 
+    # Add share
+    _df['price_diff_abs'] = _df['price_diff'].abs()
+    df['tot_spread_abs_cum'] = _df['price_diff_abs'].cumsum()
+    df['share_cum'] = (_df['gain_cum'] / _df['tot_spread_abs_cum']).round(3)
+
     return _df
 
 
