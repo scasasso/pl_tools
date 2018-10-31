@@ -20,8 +20,7 @@
 #
 ################################################################################
 """
-
-from pymongo.mongo_client import MongoClient
+from bisect import bisect
 from datetime import timedelta, datetime
 from pytz import timezone
 import pandas as pd
@@ -94,41 +93,30 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
     dates, vals = [], []
     res = collection.find(query).sort(date_field, 1)
 
+    n_res = res.count()
     if verbose > 0:
-        logger.info('Found {0} results'.format(res.count()))
+        logger.info('Found {0} results'.format(n_res))
+
+    dates_exp = pd.date_range(date_start, date_end).to_pydatetime().tolist()
+    n_exp = len(dates_exp)
+    if n_res != n_exp:
+        print '{0} results expected!'.format(n_exp)
+
+    dates_found = []
     for row in res:
 
         dt = row[date_field]
+        dates_found.append(dt)
         values = row[value_field]
-
-        # Daylight saving time
-        res = get_day_saving_time_day(tz=tz, year=dt.year)
-        h_to_remove, h_to_clone = None, None
-        if tz is not None:
-            if dt == res[0]:
-                if tz.startswith('Europe'):
-                    h_to_remove = 1
-                else:
-                    h_to_remove = 2
-            elif dt == res[1]:
-                h_to_clone = 1
 
         # Build the datetime list
         datetimes = pd.date_range(start=dt,
                                   end=dt + timedelta(hours=23) + timedelta(minutes=59) + timedelta(seconds=59),
-                                  freq=granularity)
+                                  freq=granularity, tz=tz)
+        datetimes = datetimes.tz_localize(None)
         if not len(values) > 0:
             logger.info('For day %s values is an empty list. It will be filled with NaNs' % dt)
             values = [np.nan] * len(datetimes)
-        if h_to_clone is not None:
-            datetimes_l = datetimes.tolist()
-            dts_to_clone = [d for d in datetimes_l if d.hour == h_to_clone]
-            g = get_gran_from_freq(granularity)
-            datetimes_l = datetimes_l[:g + g * h_to_clone] + dts_to_clone + datetimes_l[g + g * h_to_clone:]
-            datetimes = pd.DatetimeIndex(datetimes_l)
-
-        if h_to_remove is not None:
-            datetimes = [d for d in datetimes if d.hour != h_to_remove]
 
         if len(datetimes) > len(values):
             if missing_pol == 'raise':
@@ -138,13 +126,7 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
                 logger.error(msg)
                 raise ValueError(msg)
             elif missing_pol == 'pad':
-                if h_to_clone is not None:
-                    datetimes_l = datetimes.tolist()
-                    dts_to_clone = [d for d in datetimes_l if d.hour == h_to_clone]
-                    imin, imax = datetimes_l.index(dts_to_clone[0]), datetimes_l.index(dts_to_clone[-1]) + 1
-                    values = values[:imax] + values[imin: imax] + values[imax:]
-                else:
-                    values.extend(values[-1:] * (len(datetimes) - len(values)))
+                values.extend(values[-1:] * (len(datetimes) - len(values)))
             elif missing_pol == 'prepend':
                 datetimes = datetimes[:len(values)]
             elif missing_pol == 'append':
@@ -186,6 +168,18 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
         dates.extend(datetimes)
         vals.extend(values)
 
+    # Add missing dates
+    if n_exp > n_res:
+        missing_dates = list(set(dates_exp) - set(dates_found))
+        for m in missing_dates:
+            datetimes = pd.date_range(start=m,
+                                      end=m + timedelta(hours=23) + timedelta(minutes=59) + timedelta(seconds=59),
+                                      freq=granularity, tz=tz)
+            datetimes = datetimes.tz_localize(None)
+            idx = bisect(dates, m)
+            dates = dates[:idx] + datetimes.tolist() + dates[idx:]
+            vals = vals[:idx] + [np.nan] * len(datetimes) + vals[idx:]
+
     if out_format == 'dict':
         return dict(zip([d.to_pydatetime() for d in dates], vals))
     elif out_format == 'list':
@@ -193,7 +187,7 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
     elif out_format == 'dataframe':
         df = pd.DataFrame(index=dates, columns=[value_field])
         df[value_field] = vals
-        df.sort_index(inplace=True)
+        # df.sort_index(inplace=True)
         return df
     else:
         msg = 'Format {fo} is not supported. ' \
@@ -249,39 +243,26 @@ def get_daily_ts_multi(db, coll_name, date_start, date_end, granularity='1H', da
     dates, vals = [], {}
     res = collection.find(query).sort(date_field, 1)
 
+    n_res = res.count()
     if verbose > 0:
-        logger.info('Found {0} results'.format(res.count()))
+        logger.info('Found {0} results'.format(n_res))
 
+    dates_exp = pd.date_range(date_start, date_end).to_pydatetime().tolist()
+    n_exp = len(dates_exp)
+    if n_res != n_exp:
+        print '{0} results expected!'.format(n_exp)
+
+    dates_found = []
     # Loop over days
     for row in res:
         dt = row[date_field]
-
-        # Daylight saving time
-        res = get_day_saving_time_day(tz=tz, year=dt.year)
-        h_to_remove, h_to_clone = None, None
-        if tz is not None:
-            if dt == res[0]:
-                if tz.startswith('Europe'):
-                    h_to_remove = 1
-                else:
-                    h_to_remove = 2
-            elif dt == res[1]:
-                h_to_clone = 1
+        dates_found.append(dt)
 
         # Build the datetime list
         datetimes = pd.date_range(start=dt,
                                   end=dt + timedelta(hours=23) + timedelta(minutes=59) + timedelta(seconds=59),
-                                  freq=granularity)
-
-        if h_to_clone is not None:
-            datetimes_l = datetimes.tolist()
-            dts_to_clone = [d for d in datetimes_l if d.hour == h_to_clone]
-            g = get_gran_from_freq(granularity)
-            datetimes_l = datetimes_l[:g + g * h_to_clone] + dts_to_clone + datetimes_l[g + g * h_to_clone:]
-            datetimes = pd.DatetimeIndex(datetimes_l)
-
-        if h_to_remove is not None:
-            datetimes = [d for d in datetimes if d.hour != h_to_remove]
+                                  freq=granularity, tz=tz)
+        datetimes = datetimes.tz_localize(None)
 
         # Loop over value fields
         for value_f in value_field:
@@ -299,13 +280,7 @@ def get_daily_ts_multi(db, coll_name, date_start, date_end, granularity='1H', da
                     logger.error(msg)
                     raise ValueError(msg)
                 elif missing_pol == 'pad':
-                    if h_to_clone is not None:
-                        datetimes_l = datetimes.tolist()
-                        dts_to_clone = [d for d in datetimes_l if d.hour == h_to_clone]
-                        imin, imax = datetimes_l.index(dts_to_clone[0]), datetimes_l.index(dts_to_clone[-1]) + 1
-                        values = values[:imax] + values[imin: imax] + values[imax:]
-                    else:
-                        values.extend(values[-1:] * (len(datetimes) - len(values)))
+                    values.extend(values[-1:] * (len(datetimes) - len(values)))
                 elif missing_pol == 'prepend':
                     datetimes = datetimes[:len(values)]
                 elif missing_pol == 'append':
@@ -348,6 +323,18 @@ def get_daily_ts_multi(db, coll_name, date_start, date_end, granularity='1H', da
 
             vals.setdefault(value_f, [])
             vals[value_f].extend(values)
+
+            # Add missing dates
+            if n_exp > n_res:
+                missing_dates = list(set(dates_exp) - set(dates_found))
+                for m in missing_dates:
+                    datetimes = pd.date_range(start=m,
+                                              end=m + timedelta(hours=23) + timedelta(minutes=59) + timedelta(seconds=59),
+                                              freq=granularity, tz=tz)
+                    datetimes = datetimes.tz_localize(None)
+                    idx = bisect(dates, m)
+                    dates = dates[:idx] + datetimes.tolist() + dates[idx:]
+                    vals[value_f] = values[:idx] + [np.nan] * len(datetimes) + values[idx:]
 
         dates.extend(datetimes)
 
