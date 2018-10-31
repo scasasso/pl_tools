@@ -106,14 +106,13 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
     for row in res:
 
         dt = row[date_field]
-        dates_found.append(dt)
         values = row[value_field]
 
         # Build the datetime list
         datetimes = pd.date_range(start=dt,
                                   end=dt + timedelta(hours=23) + timedelta(minutes=59) + timedelta(seconds=59),
                                   freq=granularity, tz=tz)
-        datetimes = datetimes.tz_localize(None)
+        # datetimes = datetimes.tz_localize(None)
         if not len(values) > 0:
             logger.info('For day %s values is an empty list. It will be filled with NaNs' % dt)
             values = [np.nan] * len(datetimes)
@@ -165,6 +164,7 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
                 logger.error(msg)
                 raise NotImplementedError(msg)
 
+        dates_found.append(dt)
         dates.extend(datetimes)
         vals.extend(values)
 
@@ -175,7 +175,7 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
             datetimes = pd.date_range(start=m,
                                       end=m + timedelta(hours=23) + timedelta(minutes=59) + timedelta(seconds=59),
                                       freq=granularity, tz=tz)
-            datetimes = datetimes.tz_localize(None)
+            # datetimes = datetimes.tz_localize(None)
             idx = bisect(dates, m)
             dates = dates[:idx] + datetimes.tolist() + dates[idx:]
             vals = vals[:idx] + [np.nan] * len(datetimes) + vals[idx:]
@@ -256,13 +256,12 @@ def get_daily_ts_multi(db, coll_name, date_start, date_end, granularity='1H', da
     # Loop over days
     for row in res:
         dt = row[date_field]
-        dates_found.append(dt)
 
         # Build the datetime list
         datetimes = pd.date_range(start=dt,
                                   end=dt + timedelta(hours=23) + timedelta(minutes=59) + timedelta(seconds=59),
                                   freq=granularity, tz=tz)
-        datetimes = datetimes.tz_localize(None)
+        # datetimes = datetimes.tz_localize(None)
 
         # Loop over value fields
         for value_f in value_field:
@@ -331,11 +330,12 @@ def get_daily_ts_multi(db, coll_name, date_start, date_end, granularity='1H', da
                     datetimes = pd.date_range(start=m,
                                               end=m + timedelta(hours=23) + timedelta(minutes=59) + timedelta(seconds=59),
                                               freq=granularity, tz=tz)
-                    datetimes = datetimes.tz_localize(None)
+                    # datetimes = datetimes.tz_localize(None)
                     idx = bisect(dates, m)
                     dates = dates[:idx] + datetimes.tolist() + dates[idx:]
                     vals[value_f] = values[:idx] + [np.nan] * len(datetimes) + values[idx:]
 
+        dates_found.append(dt)
         dates.extend(datetimes)
 
     if out_format == 'dict':
@@ -382,6 +382,7 @@ def write_daily_ts(db, coll_name, df, date_field='day', value_field=None, dfcol=
         logger.error(msg)
         raise ValueError(msg)
 
+    df.index = df.index.tz_localize(None)
     for ts, day_df in df.groupby(pd.Grouper(freq='1D')):
         query = {date_field: ts.to_pydatetime()}
 
