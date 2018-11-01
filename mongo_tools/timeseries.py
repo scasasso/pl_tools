@@ -59,7 +59,7 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
     # Check arguments
     allowed_out_formats = ['dict', 'list', 'dataframe']
     allowed_missing_pol = ['raise', 'pad', 'prepend', 'append', 'skip', 'auto']
-    allowed_inexcess_pol = ['raise', 'slice']
+    allowed_inexcess_pol = ['raise', 'slice', 'auto']
 
     if verbose > 1:
         logger.info(' Database instance:\n%s' % str(db))
@@ -133,16 +133,25 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
             elif missing_pol == 'skip':
                 continue
             elif missing_pol == 'auto':
-                if dt == date_start:
-                    datetimes = datetimes[-len(values):]
-                elif dt == date_end:
-                    datetimes = datetimes[:len(values)]
+                if tz is not None and dt == get_day_saving_time_day(tz, dt.year)[1]:
+                    g = get_gran_from_freq(freq=granularity)
+                    missing = (len(datetimes) - len(values)) // g
+                    if missing > 1:
+                        values.extend(values[-1:] * (len(datetimes) - len(values)))
+                    elif tz.startswith('Europe'):
+                        values = values[: 3 * g] + values[2 * g: 3 * g] + values[3 * g:]
+                    elif tz.startswith('US'):
+                        values = values[: 2 * g] + values[1 * g: 2 * g] + values[2 * g:]
                 else:
-                    msg = 'For date {date} found {nf} values instead {ne}'.format(date=dt.strftime('%Y-%m-%d'),
-                                                                                  nf=len(values),
-                                                                                  ne=len(datetimes))
-                    logger.error(msg)
-                    raise ValueError(msg)
+                    if dt == date_start:
+                        datetimes = datetimes[-len(values):]
+                    elif dt == date_end:
+                        datetimes = datetimes[:len(values)]
+                    else:
+                        raise ValueError(
+                            'For date {date} found {nf} values instead {ne}'.format(date=dt.strftime('%Y-%m-%d'),
+                                                                                    nf=len(values),
+                                                                                    ne=len(datetimes)))
             else:
                 msg = 'Unknown policy for missing values: {po}. ' \
                       'Valid ones are:\n {l}'.format(po=missing_pol, l=str(allowed_missing_pol))
@@ -158,6 +167,26 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
                 raise ValueError(msg)
             elif inexcess_pol == 'slice':
                 values = values[:len(datetimes)]
+            elif missing_pol == 'auto':
+                if tz is not None and dt == get_day_saving_time_day(tz, dt.year)[1]:
+                    g = get_gran_from_freq(freq=granularity)
+                    missing = (len(datetimes) - len(values)) // g
+                    if missing > 1:
+                        values.extend(values[-1:] * (len(datetimes) - len(values)))
+                    elif tz.startswith('Europe'):
+                        values = values[: 3 * g] + values[2 * g: 3 * g] + values[3 * g:]
+                    elif tz.startswith('US'):
+                        values = values[: 2 * g] + values[1 * g: 2 * g] + values[2 * g:]
+                else:
+                    if dt == date_start:
+                        datetimes = datetimes[-len(values):]
+                    elif dt == date_end:
+                        datetimes = datetimes[:len(values)]
+                    else:
+                        raise ValueError(
+                            'For date {date} found {nf} values instead {ne}'.format(date=dt.strftime('%Y-%m-%d'),
+                                                                                    nf=len(values),
+                                                                                    ne=len(datetimes)))
             else:
                 msg = 'Unknown policy for values in excess: {po}. ' \
                       'Valid ones are:\n {l}'.format(po=inexcess_pol, l=str(allowed_inexcess_pol))
@@ -201,7 +230,7 @@ def get_daily_ts_multi(db, coll_name, date_start, date_end, granularity='1H', da
     # Check arguments
     allowed_out_formats = ['dict', 'list', 'dataframe']
     allowed_missing_pol = ['raise', 'pad', 'prepend', 'append', 'skip', 'auto']
-    allowed_inexcess_pol = ['raise', 'slice']
+    allowed_inexcess_pol = ['raise', 'slice', 'auto']
 
     if verbose > 1:
         logger.info(' Database instance:\n%s' % str(db))
@@ -287,16 +316,25 @@ def get_daily_ts_multi(db, coll_name, date_start, date_end, granularity='1H', da
                 elif missing_pol == 'skip':
                     continue
                 elif missing_pol == 'auto':
-                    if dt == date_start:
-                        datetimes = datetimes[-len(values):]
-                    elif dt == date_end:
-                        datetimes = datetimes[:len(values)]
+                    if tz is not None and dt == get_day_saving_time_day(tz, dt.year)[1]:
+                        g = get_gran_from_freq(freq=granularity)
+                        missing = (len(datetimes) - len(values)) // g
+                        if missing > 1:
+                            values.extend(values[-1:] * (len(datetimes) - len(values)))
+                        elif tz.startswith('Europe'):
+                            values = values[: 3 * g] + values[2 * g: 3 * g] + values[3 * g:]
+                        elif tz.startswith('US'):
+                            values = values[: 2 * g] + values[1 * g: 2 * g] + values[2 * g:]
                     else:
-                        msg = 'For date {date} found {nf} values instead {ne}'.format(date=dt.strftime('%Y-%m-%d'),
-                                                                                      nf=len(values),
-                                                                                      ne=len(datetimes))
-                        logger.error(msg)
-                        raise ValueError(msg)
+                        if dt == date_start:
+                            datetimes = datetimes[-len(values):]
+                        elif dt == date_end:
+                            datetimes = datetimes[:len(values)]
+                        else:
+                            raise ValueError(
+                                'For date {date} found {nf} values instead {ne}'.format(date=dt.strftime('%Y-%m-%d'),
+                                                                                        nf=len(values),
+                                                                                        ne=len(datetimes)))
                 else:
                     msg = 'Unknown policy for missing values: {po}. ' \
                           'Valid ones are:\n {l}'.format(po=inexcess_pol,
@@ -313,6 +351,17 @@ def get_daily_ts_multi(db, coll_name, date_start, date_end, granularity='1H', da
                     raise ValueError(msg)
                 elif inexcess_pol == 'slice':
                     values = values[:len(datetimes)]
+                elif inexcess_pol == 'auto':
+                    if tz is not None and dt == get_day_saving_time_day(tz, dt.year)[0]:
+                        g = get_gran_from_freq(freq=granularity)
+                        excess = (len(values) - len(datetimes)) // g
+                        if excess > 1:
+                            logger.warning('{0} excess datetimes found'.format(excess))
+                            values = values[:len(datetimes)]
+                        else:
+                            values = values[: 2 * g] + values[3 * g:]
+                    else:
+                        values = values[:len(datetimes)]
                 else:
                     msg = 'Unknown policy for values in excess: {po}. ' \
                           'Valid ones are:\n {l}'.format(po=inexcess_pol,
