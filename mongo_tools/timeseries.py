@@ -97,10 +97,10 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
     if verbose > 0:
         logger.info('Found {0} results'.format(n_res))
 
-    dates_exp = pd.date_range(date_start, date_end).to_pydatetime().tolist()
+    dates_exp = pd.date_range(date_start, date_end, tz=tz).to_pydatetime().tolist()
     n_exp = len(dates_exp)
     if n_res != n_exp:
-        print '{0} results expected!'.format(n_exp)
+        print '{0} results expected, {1} found!'.format(n_exp, n_res)
 
     dates_found = []
     for row in res:
@@ -193,7 +193,10 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
                 logger.error(msg)
                 raise NotImplementedError(msg)
 
-        dates_found.append(dt)
+        if tz is None:
+            dates_found.append(dt)
+        else:
+            dates_found.append(timezone(tz).localize(dt))
         dates.extend(datetimes)
         vals.extend(values)
 
@@ -276,7 +279,7 @@ def get_daily_ts_multi(db, coll_name, date_start, date_end, granularity='1H', da
     if verbose > 0:
         logger.info('Found {0} results'.format(n_res))
 
-    dates_exp = pd.date_range(date_start, date_end).to_pydatetime().tolist()
+    dates_exp = pd.date_range(date_start, date_end, tz=tz).to_pydatetime().tolist()
     n_exp = len(dates_exp)
     if n_res != n_exp:
         print '{0} results expected!'.format(n_exp)
@@ -384,7 +387,10 @@ def get_daily_ts_multi(db, coll_name, date_start, date_end, granularity='1H', da
                     dates = dates[:idx] + datetimes.tolist() + dates[idx:]
                     vals[value_f] = values[:idx] + [np.nan] * len(datetimes) + values[idx:]
 
-        dates_found.append(dt)
+        if tz is None:
+            dates_found.append(dt)
+        else:
+            dates_found.append(timezone(tz).localize(dt))
         dates.extend(datetimes)
 
     if out_format == 'dict':
