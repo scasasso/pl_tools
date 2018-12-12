@@ -224,7 +224,16 @@ class MarketTendencyValidator(object):
 
 
 def get_freq_from_df(df):
-    freq = pd.infer_freq(df.index)
+    # Retrieve the frequency
+    if df.index.tz is None:
+        freq = pd.infer_freq(df.index)
+    else:
+        df_copy = df.copy()
+        df_copy.index = df_copy.index.tz_convert('UTC')
+        df_copy = df_copy[~df_copy.index.duplicated(keep='first')].copy()
+        freq = pd.infer_freq(df_copy.index)
+
+    # Test the frequency value
     if freq == 'H' or freq == '1H' or freq == '60T':
         gran = 1
     elif freq == '30T' or freq == '0.5H':
@@ -312,8 +321,17 @@ def compute_perfomances(df):
     _df['gain_per_pos'] = (_df['gain_cum'] / (_df['pl_pred'] != 0).cumsum()).round(3)
     _df['accuracy'] = ((_df['pl_correct'] == 1).astype('int8').cumsum().astype(float) / ((_df['pl_pred'] != 0) & (_df['pl_correct'] != 0)).cumsum()).round(3).fillna(0.5)
     if 'prob' in _df.columns:
-        _df['rocauc'] = round(roc_auc_score(_df.loc[_df['price_diff'] != 0., 'price_diff'].map(lambda x: 1 if x > 0 else 0).values,
-                                            _df.loc[_df['price_diff'] != 0., 'prob'].values), 3)
+        try:
+            _df['rocauc'] = round(roc_auc_score(_df.loc[_df['price_diff'] != 0., 'price_diff'].map(lambda x: 1 if x > 0 else 0).values,
+                                                _df.loc[_df['price_diff'] != 0., 'prob'].values), 3)
+        except ValueError as e:
+            if 'Only one class' in str(e):
+                logger.warning('Only one class in the data, it is not possible to compute the ROC AUC metric.')
+                _df['rocauc'] = np.nan
+                pass
+            else:
+                logger.error('Error occured while computing ROC AUC:\n %s' % str(e))
+                raise e
     else:
         _df['rocauc'] = np.nan
 
