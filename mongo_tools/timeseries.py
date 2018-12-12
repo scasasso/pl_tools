@@ -108,6 +108,10 @@ def get_daily_ts(db, coll_name, date_start, date_end, granularity='1H', date_fie
         dt = row[date_field]
         values = row[value_field]
 
+        # Make it a list
+        if not isinstance(values, list):
+            values = [values]
+
         # Build the datetime list
         datetimes = pd.date_range(start=dt,
                                   end=dt + timedelta(hours=23) + timedelta(minutes=59) + timedelta(seconds=59),
@@ -298,6 +302,10 @@ def get_daily_ts_multi(db, coll_name, date_start, date_end, granularity='1H', da
         # Loop over value fields
         for value_f in value_field:
             values = row[value_f]
+
+            # Make it a list
+            if not isinstance(values, list):
+                values = [values]
 
             if not len(values) > 0:
                 logger.info('For day %s values in key %s is an empty list. It will be filled with NaNs' % (dt, value_f))
