@@ -37,7 +37,7 @@ warnings.filterwarnings("ignore")
 logger = logging.getLogger(__file__)
 
 # Fir the scan
-DEFAULT_THR_LIST_SCAN = np.round(np.arange(0.49, 0.51001, 0.01), 2)
+DEFAULT_THR_LIST_SCAN = np.round(np.arange(0.35, 0.65001, 0.01), 2)
 
 # Metrics
 METRICS = ['accuracy', 'accuracy_h', 'gain_cum', 'gain_per_pos']
