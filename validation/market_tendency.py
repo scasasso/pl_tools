@@ -20,7 +20,6 @@
 #
 ################################################################################
 """
-import time
 import pytz
 import os
 import gc
@@ -45,14 +44,16 @@ METRICS = ['accuracy', 'accuracy_h', 'gain_cum', 'gain_per_pos']
 
 
 class MarketTendencyValidator(object):
-    def __init__(self, name, da_coll, pos_coll, score_coll, neg_coll=None, timezone=None):
+    def __init__(self, name, da_coll, pos_coll, score_coll, neg_coll=None, timezone=None, na_strategy='drop'):
         self.name = name
         self.da_coll = da_coll
         self.pos_coll = pos_coll
         self.score_coll = score_coll
         self.timezone = timezone
         self.df_input = pd.DataFrame()
-        self.df_scan = pd.DataFrame()
+        if na_strategy not in ['drop', 'ffill']:
+            raise ValueError('Unknown strategy for NaNs: %s' % str(na_strategy))
+        self.na_strategy = na_strategy
 
         if neg_coll is None:
             self.neg_coll = self.pos_coll
@@ -77,7 +78,10 @@ class MarketTendencyValidator(object):
         df = pd.concat([df_da, df_pos, df_neg, df_scores], axis=1)
 
         # NaNs
-        df = df.fillna(method='ffill')
+        if self.na_strategy == 'ffill':
+            df = df.fillna(method='ffill')
+        elif self.na_strategy == 'drop':
+            df = df.dropna(how='any')
 
         return df
 
