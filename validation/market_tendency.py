@@ -20,6 +20,7 @@
 #
 ################################################################################
 """
+import time
 import pytz
 import os
 import gc
@@ -30,11 +31,14 @@ from plot_tools.timeseries import plot_ts_mpl
 from plot_tools.histogram import plot_hist_period, plot_sns_class, plot_hist_class, plot_scan
 from plot_tools.graph import plot_scan_1d
 from sklearn.metrics import roc_auc_score
+from joblib import Parallel, delayed
+import warnings
+warnings.filterwarnings("ignore")
 
 logger = logging.getLogger(__file__)
 
 # Fir the scan
-DEFAULT_THR_LIST_SCAN = np.round(np.arange(0.2, 0.70001, 0.01), 2)
+DEFAULT_THR_LIST_SCAN = np.round(np.arange(0.49, 0.51001, 0.01), 2)
 
 # Metrics
 METRICS = ['accuracy', 'accuracy_h', 'gain_cum', 'gain_per_pos']
@@ -48,7 +52,6 @@ class MarketTendencyValidator(object):
         self.score_coll = score_coll
         self.timezone = timezone
         self.df_input = pd.DataFrame()
-        self.df_val = pd.DataFrame()
         self.df_scan = pd.DataFrame()
 
         if neg_coll is None:
@@ -73,9 +76,13 @@ class MarketTendencyValidator(object):
         # Concatenate
         df = pd.concat([df_da, df_pos, df_neg, df_scores], axis=1)
 
-        return df.dropna()
+        # NaNs
+        df = df.fillna(method='ffill')
 
-    def produce_validation(self, dt_start, dt_end, thr, thr_low=None, agg_pred=None, use_avg_price=True, skip_dates=None):
+        return df
+
+    def produce_validation(self, dt_start, dt_end, thr, thr_low=None, agg_pred=None, use_avg_price=True,
+                           skip_dates=None, hourly_stats=True):
         # Default
         if thr_low is None:
             thr_low = thr
@@ -103,110 +110,126 @@ class MarketTendencyValidator(object):
             self.df_input['name'] = self.name
 
         # Eventually drop dates
-        try:
-            skip_dates = [d.tz_localize(self.timezone) for d in skip_dates]
-            self.df_input = self.df_input.drop(skip_dates)
-        except ValueError:
-            logger.warning('You are trying to skip dates which are not in index')
-            pass
-        except pytz.exceptions.AmbiguousTimeError as e:
-            logger.error('Ambiguity in skip dates (probably due to DST)')
-            pass
+        if len(skip_dates) > 0:
+            try:
+                skip_dates = [d.tz_localize(self.timezone) for d in skip_dates]
+                self.df_input = self.df_input.drop(skip_dates)
+            except ValueError:
+                logger.warning('You are trying to skip dates which are not in index')
+                pass
+            except pytz.exceptions.AmbiguousTimeError as e:
+                logger.error('Ambiguity in skip dates (probably due to DST)')
+                pass
 
         # Input collections
-        self.df_val = self.df_input.copy()
+        df_val = self.df_input.copy()
 
-        # Add the market tendency
-        self.df_val = add_market_tendency(self.df_val)
+        if 'market_tendency' not in df_val.columns:
+            # Add the market tendency
+            df_val = add_market_tendency(df_val)
 
         # Get hour aggregates
-        self.df_val['threshold'] = thr
-        self.df_val['threshold_low'] = thr_low
-        self.df_val = add_agg_positions(self.df_val, agg_pred, self.da_coll.freq)
+        df_val['threshold'] = thr
+        df_val['threshold_low'] = thr_low
+        df_val = add_agg_positions(df_val, agg_pred, self.da_coll.freq)
 
         # Compute the cost/gain
-        if use_avg_price is True:
-            self.df_val['imbalance_price'] = self.df_val[['positive_price', 'negative_price']].mean(axis=1)
-        else:  # if pred == 0 we don't care about the imbalance price anyway
-            self.df_val['imbalance_price'] = self.df_val.apply(lambda x: x['positive_price'] if x['pl_pred'] > 0 else x['negative_price'] if x['pl_pred'] < 0 else x.get('dayahead_price', np.nan), axis=1)
-        self.df_val['price_diff'] = (self.df_val['imbalance_price'] - self.df_val['dayahead_price']).round(3)
-        self.df_val = compute_perfomances(self.df_val)
+        if 'imbalance_price' not in df_val.columns:
+            if use_avg_price is True:
+                df_val['imbalance_price'] = df_val[['positive_price', 'negative_price']].mean(axis=1)
+            else:  # if pred == 0 we don't care about the imbalance price anyway
+                df_val['imbalance_price'] = df_val.apply(lambda x: x['positive_price'] if x['pl_pred'] > 0 else x['negative_price'] if x['pl_pred'] < 0 else x.get('dayahead_price', np.nan), axis=1)
+        if 'price_diff' not in df_val.columns:
+            df_val['price_diff'] = (df_val['imbalance_price'] - df_val['dayahead_price']).round(3)
+        df_val = compute_perfomances(df_val)
 
-        # Get aggregate hourly statistics
-        df_h = get_hourly_stats(self.df_val)
+        if hourly_stats:
+            # Get aggregate hourly statistics
+            df_h = get_hourly_stats(df_val)
 
-        # Add to the original DataFrame
-        self.df_val['accuracy_h'] = df_h['accuracy'].reindex(index=self.df_val.index, method='ffill')
+            # Add to the original DataFrame
+            df_val['accuracy_h'] = df_h['accuracy'].reindex(index=df_val.index, method='ffill')
 
-        del df_h
-        gc.collect()
+            del df_h
+            gc.collect()
 
-        return self.df_val.copy()
-
-    def dump(self, out_dir):
-        self.df_val.to_csv(os.path.join(out_dir, 'validation.csv'))
-        if len(self.df_scan) > 0:
-            self.df_scan.to_csv(os.path.join(out_dir, 'scan.csv'))
+        return df_val.copy()
 
     def scan(self, eval_metric, min_frac_pos=0., thr_list=None, scan2d=True, plot=False, out_dir=None, **kwargs):
-        metric_v_best = 0. if eval_metric in ['accuracy', 'accuracy_h'] else -1.E+06
-
         # List of thresholds to loop over
         if thr_list is None:
             thr_list = DEFAULT_THR_LIST_SCAN
 
-        # Initialize the scan data
-        scan_data = []
+        # Loop function
+        default_pod = {'name': 'unknown', 'frac_pos': 0.}
+        for metr in METRICS:
+            default_pod[metr] = -1.E+06
 
-        # Deafult results
-        df_best = pd.DataFrame()
-        for thr in thr_list:
-            for thr_low in thr_list:
-                if thr_low > thr:
-                    continue
-                if scan2d is not True and thr != thr_low:
-                    continue
-                # Do the validation for this point in the scan
-                df_val = self.produce_validation(thr=thr, thr_low=thr_low, **kwargs)
+        df_base = self.produce_validation(thr=0.5, thr_low=0.5, **kwargs)
+        freq, gran = get_freq_from_df(df_base)
+        keep_cols = ['dayahead_price', 'positive_price', 'negative_price', 'prob', 'imbalance_price', 'price_diff',
+                     'price_diff_pos', 'price_diff_neg', 'market_tendency', 'name']
+        da_freq = self.da_coll.freq
+
+        def inspect(t, tlo):
+            pod = dict(default_pod)
+            pod.update({'thr': t, 'thr_low': tlo})
+            try:
+                # Start from base
+                _df_val = df_base[keep_cols].copy()
+                # Add positions
+                aggf = default_aggregator_gen(t, tlo)
+                _df_val['pl_pred'] = _df_val['prob'].groupby(pd.Grouper(freq=da_freq)). \
+                    agg(aggf).astype(int).reindex(index=_df_val.index, method='ffill')
+                _df_val['frac_pos'] = float((_df_val['pl_pred'] != 0).astype(int).sum()) / len(_df_val)
+
+                # Compute performances
+                _df_val['pl_correct'] = (np.sign(_df_val['pl_pred']).astype(int) == np.sign(_df_val['market_tendency']).astype(int)).astype('int8')
+                _df_val['pl_correct'] = _df_val['pl_correct'].replace(0, -1)
+                _df_val.loc[_df_val['pl_pred'] == 0, 'pl_correct'] = 0
+                _df_val['gain'] = ((_df_val['pl_pred'] * _df_val['price_diff']) / gran).round(3)
+                _df_val['gain_cum'] = _df_val['gain'].cumsum().round(3)
+                _df_val['gain_per_pos'] = (_df_val['gain_cum'] / (_df_val['pl_pred'] != 0).cumsum()).round(3)
+                _df_val['accuracy'] = ((_df_val['pl_correct'] == 1).astype('int8').cumsum().astype(float) / (
+                            (_df_val['pl_pred'] != 0) & (_df_val['pl_correct'] != 0)).cumsum()).round(3).fillna(0.5)
 
                 # Add data for this point of the scan
-                frac_pos = df_val.iloc[-1, df_val.columns.get_loc('frac_pos')]
-                point_dict = {'name': df_val['name'][0],
-                              'thr': thr, 'thr_low': thr_low,
-                              'frac_pos': frac_pos}
-                for met in METRICS:
-                    point_dict[met] = df_val.iloc[-1, df_val.columns.get_loc(met)]
+                fp = _df_val.iloc[-1, _df_val.columns.get_loc('frac_pos')]
+                pod.update({'name': _df_val['name'][0], 'frac_pos': fp})
+                for metri in METRICS:
+                    try:
+                        pod[metri] = _df_val.iloc[-1, _df_val.columns.get_loc(metri)]
+                    except:
+                        pass
 
                 # If not enough positions taken -> discard
-                if frac_pos < min_frac_pos:
-                    for met in METRICS:
-                        point_dict[met] = -1.E+06
+                if fp < min_frac_pos:
+                    for metri in METRICS:
+                        pod[metri] = -1.E+06
+            except Exception as e:
+                print str(e)
+                return pod
 
-                scan_data.append(point_dict)
+            return pod
 
-                # Check the current value of the metric and eventually replace the best value
-                metric_v = df_val.iloc[-1, df_val.columns.get_loc(eval_metric)]
-                logger.debug('Scanning thr = {0:.2f}, '
-                             'thr_low = {1:.2f}, '
-                             'fraction of positions = {2:.2f}: {3} = {4:.2f}'.format(thr, thr_low, frac_pos,
-                                                                                     eval_metric, metric_v))
+        # Building the (thr, thr_low) combinations
+        combs = [(round(th, 2), round(tl, 2)) for th in thr_list for tl in thr_list if tl <= th]
+        logger.info('Will try {} threshold combinations'.format(len(combs)))
 
-                if frac_pos < min_frac_pos:
-                    logger.debug('Discard because fraction of positions is below threshold')
-                    continue
-
-                if metric_v > metric_v_best:
-                    logger.info('New best {0} = {1:.2f}'.format(eval_metric, metric_v))
-                    metric_v_best = metric_v
-                    df_best = df_val.copy()
-                del df_val
-                gc.collect()
-
-        # keep the best
-        self.df_val = df_best.copy()
+        # Run the scan
+        scan_data = Parallel(n_jobs=-1, verbose=10)(delayed(inspect)(th, tl) for th, tl in combs)
 
         # Write the scan data
-        self.df_scan = pd.DataFrame(data=scan_data)
+        df_scan = pd.DataFrame(data=scan_data)
+        df_scan.to_csv(os.path.join(out_dir, 'scan.csv'))
+
+        # Get best threshold combination
+        df_scan['index'] = df_scan.apply(lambda x: tuple([x['thr'], x['thr_low']]), axis=1)
+        df_scan = df_scan.set_index('index', drop=True)
+        best_thr, best_thr_low = df_scan[eval_metric].idxmax()
+        logger.info('Best {0} achieved with thresholds ({1:.2f}, {2:.2f})'.format(eval_metric, best_thr, best_thr_low))
+        df_best = self.produce_validation(thr=best_thr, thr_low=best_thr_low, **kwargs)
+        df_best.to_csv(os.path.join(out_dir, 'validation.csv'))
 
         # Eventually, plot
         if plot is True:
@@ -214,13 +237,11 @@ class MarketTendencyValidator(object):
                 logger.warning('You must specify the out_dir parameter to plot the scan')
             else:
                 if scan2d is True:
-                    plot_scan(self.df_scan, what=eval_metric, out_dir=out_dir)
+                    plot_scan(df_scan, what=eval_metric, out_dir=out_dir)
                 else:
-                    plot_scan_1d(self.df_scan, what=eval_metric, out_dir=out_dir)
+                    plot_scan_1d(df_scan, what=eval_metric, out_dir=out_dir)
 
-        # Cleanup
-        del df_best
-        gc.collect()
+        return df_best
 
 
 def get_freq_from_df(df):
@@ -297,7 +318,7 @@ def add_agg_positions(df, aggfunc=None, da_freq='1H'):
     return _df
 
 
-def compute_perfomances(df):
+def compute_perfomances(df, freq=None, gran=None):
     # Input check
     cols = ['pl_pred', 'price_diff', 'market_tendency']
     for col in cols:
@@ -309,8 +330,9 @@ def compute_perfomances(df):
     # Do not write on input object
     _df = df.copy()
 
-    # Get frequency
-    freq, gran = get_freq_from_df(_df)
+    if freq is None or gran is None:
+        # Get frequency
+        freq, gran = get_freq_from_df(_df)
 
     # You can always add more
     _df['pl_correct'] = (np.sign(_df['pl_pred']).astype(int) == np.sign(_df['market_tendency']).astype(int)).astype('int8')
@@ -350,6 +372,28 @@ def get_hourly_stats(df):
     df_h['accuracy'] = ((df_h['pl_correct'] == 1).astype('int8').cumsum().astype(float) / ((df_h['pl_pred'] != 0) & (df_h['pl_correct'] != 0)).cumsum()).round(3).fillna(0.5)
 
     return df_h
+
+
+def default_aggregator_gen(thr, thr_low):
+    def agg(ps):
+        preds_h = []
+        for p in ps:
+            if p < thr_low:
+                preds_h.append(-1)
+            elif p < thr:
+                preds_h.append(0)
+            else:
+                preds_h.append(1)
+
+        pred_mean = np.mean(preds_h)
+
+        if pred_mean == 0.:
+            return 0
+        elif pred_mean > 0.:
+            return 1
+        else:
+            return -1
+    return agg
 
 
 def default_aggregator(ps, thr, thr_low):
