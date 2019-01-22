@@ -50,7 +50,6 @@ class MarketTendencyValidator(object):
         self.pos_coll = pos_coll
         self.score_coll = score_coll
         self.timezone = timezone
-        self.df_input = pd.DataFrame()
         if na_strategy not in ['drop', 'ffill']:
             raise ValueError('Unknown strategy for NaNs: %s' % str(na_strategy))
         self.na_strategy = na_strategy
@@ -62,17 +61,17 @@ class MarketTendencyValidator(object):
 
     def _fetch(self, dt_start, dt_end):
         # Positive price
-        df_pos = self.pos_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='positive_price', tz=self.timezone)
+        df_pos = self.pos_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='positive_price', tz=self.timezone, verbose=0)
 
         # Negative price
-        df_neg = self.neg_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='negative_price', tz=self.timezone)
+        df_neg = self.neg_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='negative_price', tz=self.timezone, verbose=0)
 
         # Day-ahead price
-        df_da = self.da_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='dayahead_price', tz=self.timezone)
+        df_da = self.da_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='dayahead_price', tz=self.timezone, verbose=0)
         df_da = df_da.reindex(index=df_pos.index, method='ffill')
 
         # Scores
-        df_scores = self.score_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='prob', tz=self.timezone)
+        df_scores = self.score_coll.get_data(dt_start=dt_start, dt_end=dt_end, rename='prob', tz=self.timezone, verbose=0)
 
         # Concatenate
         df = pd.concat([df_da, df_pos, df_neg, df_scores], axis=1)
@@ -109,15 +108,14 @@ class MarketTendencyValidator(object):
             agg_pred = default_agg
 
         # Fetch the data
-        if not len(self.df_input) > 0:
-            self.df_input = self._fetch(dt_start, dt_end)
-            self.df_input['name'] = self.name
+        df_input = self._fetch(dt_start, dt_end)
+        df_input['name'] = self.name
 
         # Eventually drop dates
         if len(skip_dates) > 0:
             try:
                 skip_dates = [d.tz_localize(self.timezone) for d in skip_dates]
-                self.df_input = self.df_input.drop(skip_dates)
+                df_input = df_input.drop(skip_dates)
             except ValueError:
                 logger.warning('You are trying to skip dates which are not in index')
                 pass
@@ -126,7 +124,7 @@ class MarketTendencyValidator(object):
                 pass
 
         # Input collections
-        df_val = self.df_input.copy()
+        df_val = df_input.copy()
 
         if 'market_tendency' not in df_val.columns:
             # Add the market tendency
@@ -159,10 +157,12 @@ class MarketTendencyValidator(object):
 
         return df_val.copy()
 
-    def scan(self, eval_metric, min_frac_pos=0., thr_list=None, scan2d=True, plot=False, out_dir=None, **kwargs):
+    def _scan(self, eval_metric, min_frac_pos=0., thr_list=None, scan2d=True, thr_list_low=None, **kwargs):
         # List of thresholds to loop over
         if thr_list is None:
             thr_list = DEFAULT_THR_LIST_SCAN
+        if thr_list_low is None:
+            thr_list_low = list(thr_list)
 
         # Loop function
         default_pod = {'name': 'unknown', 'frac_pos': 0.}
@@ -224,22 +224,33 @@ class MarketTendencyValidator(object):
             return pod
 
         # Building the (thr, thr_low) combinations
-        combs = [(round(th, 2), round(tl, 2)) for th in thr_list for tl in thr_list if tl <= th]
+        combs = [(round(th, 2), round(tl, 2)) for th in thr_list for tl in thr_list_low if tl <= th]
+        if scan2d is False:
+            combs = [c for c in combs if c[0] == c[1]]
         logger.info('Will try {} threshold combinations'.format(len(combs)))
 
         # Run the scan
         scan_data = Parallel(n_jobs=-1, verbose=10)(delayed(inspect)(th, tl) for th, tl in combs)
 
-        # Write the scan data
+        # Sort the scan data
         df_scan = pd.DataFrame(data=scan_data)
-        df_scan.to_csv(os.path.join(out_dir, 'scan.csv'))
-
-        # Get best threshold combination
         df_scan['index'] = df_scan.apply(lambda x: tuple([x['thr'], x['thr_low']]), axis=1)
         df_scan = df_scan.set_index('index', drop=True)
+
+        return df_scan
+
+    def scan(self, eval_metric, min_frac_pos=0., thr_list=None, scan2d=True, plot=False, out_dir=None, thr_list_low=None, **kwargs):
+        # Scan the grid
+        df_scan = self._scan(eval_metric, min_frac_pos=min_frac_pos, thr_list=thr_list, scan2d=scan2d,
+                             thr_list_low=thr_list_low, **kwargs)
+        # Find the best point
         best_thr, best_thr_low = df_scan[eval_metric].idxmax()
-        logger.info('Best {0} achieved with thresholds ({1:.2f}, {2:.2f})'.format(eval_metric, best_thr, best_thr_low))
+        best_metri = df_scan[eval_metric].max()
+        logger.info('Best {0} = {3:.2f} achieved with thresholds ({1:.2f}, {2:.2f})'.format(eval_metric, best_thr, best_thr_low, best_metri))
         df_best = self.produce_validation(thr=best_thr, thr_low=best_thr_low, **kwargs)
+
+        # Write to output
+        df_scan.to_csv(os.path.join(out_dir, 'scan.csv'))
         df_best.to_csv(os.path.join(out_dir, 'validation.csv'))
 
         # Eventually, plot
@@ -251,6 +262,75 @@ class MarketTendencyValidator(object):
                     plot_scan(df_scan, what=eval_metric, out_dir=out_dir)
                 else:
                     plot_scan_1d(df_scan, what=eval_metric, out_dir=out_dir)
+
+        return df_best, df_scan
+
+    def dynamic_scan(self, eval_metric, dt_start, dt_end, start_upd=None, start_thrs=None,
+                     upd_freq='1W', thr_window=0.03, week_lookback=6, min_frac_pos=0.,
+                     thr_list=None, scan2d=True, out_dir=None, thr_list_low=None, use_avg_price=False):
+        # Consistency check
+        if (start_upd is None and start_thrs is None) or (start_upd is not None and start_thrs is not None):
+            msg = 'One and only one of start_upd and start_thrs parameter must be specified'
+            logger.error(msg)
+            raise ValueError(msg)
+        if start_thrs is not None:
+            start_upd = dt_start
+
+        # Get the base DataFrame to operate on
+        df_base = self.produce_validation(thr=0.5, thr_low=0.5, dt_start=dt_start, dt_end=dt_end,
+                                          use_avg_price=use_avg_price)
+
+        # Get the start threshold pairs if not specified
+        if start_thrs is None:
+            df_best, df_scan = self.scan(eval_metric=eval_metric, min_frac_pos=min_frac_pos, thr_list=thr_list,
+                                         scan2d=scan2d, plot=False, out_dir=out_dir, thr_list_low=thr_list_low,
+                                         dt_start=dt_start, dt_end=start_upd)
+            best_thr, best_thr_low = round(df_best['threshold'][-1], 2), round(df_best['threshold_low'][-1], 2)
+        else:
+            best_thr, best_thr_low = start_thrs[0], start_thrs[1]
+
+        # Loop over the periods to apply previously optimised thresholds
+        for p, df_p in df_base[start_upd:].groupby(pd.Grouper(freq=upd_freq)):
+            # Start end dates for update of thresholds
+            s, e = df_p.index[0], df_p.index[-1]
+            logger.info('New threshold pair ({0:.2f}, {1:.2f}) '
+                        'will be applied in period {2} to {3}'.format(best_thr, best_thr_low, s, e))
+            # Add threshold info to the original DataFrame
+            df_base.loc[s: e, 'threshold'] = best_thr
+            df_base.loc[s: e, 'threshold_low'] = best_thr_low
+            # Build aggregator from generator
+            aggf = default_aggregator_gen(best_thr, best_thr_low)
+            # Add predictions according to new thresholds
+            df_p = add_agg_positions(df_p, aggf, self.da_coll.freq)
+            df_base.loc[s: e, 'pl_pred'] = df_p.loc[s: e, 'pl_pred']
+            df_base.loc[s: e, 'pl_pred_str'] = df_p.loc[s: e, 'pl_pred_str']
+            # Re-scan the thresholds
+            _thr_list = np.arange(best_thr - thr_window, best_thr + thr_window, 0.01)
+            _thr_list_low = np.arange(best_thr_low - thr_window, best_thr_low + thr_window, 0.01)
+            end_scan = e.tz_localize(None).replace(hour=0, minute=0, second=0)
+            start_scan = max(end_scan - pd.Timedelta(weeks=week_lookback), dt_start)
+            logger.debug('New scan starts at {0} and ends at {1}'.format(start_scan, end_scan))
+            logger.debug('Grid is:\nthr = {0}\nthr_low = {1}'.format(_thr_list, _thr_list_low))
+            _df_best, df_scan = self.scan(eval_metric=eval_metric, min_frac_pos=min_frac_pos, thr_list=_thr_list,
+                                          scan2d=scan2d, plot=False, out_dir=out_dir, thr_list_low=_thr_list_low,
+                                          dt_start=start_scan, dt_end=end_scan)
+            best_thr, best_thr_low = round(_df_best['threshold'][-1], 2), round(_df_best['threshold_low'][-1], 2)
+
+        # Amend the fraction of positions
+        df_base['frac_pos'] = ((df_base['pl_pred'] != 0).astype(int).cumsum() / df_base['pl_pred'].expanding(
+            min_periods=1).count()).round(3)
+
+        # Compute performances
+        df_best = compute_perfomances(df_base)
+
+        # Get aggregate hourly statistics
+        df_h = get_hourly_stats(df_best)
+
+        # Add to the original DataFrame
+        df_best['accuracy_h'] = df_h['accuracy'].reindex(index=df_best.index, method='ffill')
+
+        del df_h
+        gc.collect()
 
         return df_best
 
