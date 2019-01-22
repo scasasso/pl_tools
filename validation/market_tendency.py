@@ -171,9 +171,10 @@ class MarketTendencyValidator(object):
 
         df_base = self.produce_validation(thr=0.5, thr_low=0.5, **kwargs)
         freq, gran = get_freq_from_df(df_base)
+        da_freq = self.da_coll.freq
         keep_cols = ['dayahead_price', 'positive_price', 'negative_price', 'prob', 'imbalance_price', 'price_diff',
                      'price_diff_pos', 'price_diff_neg', 'market_tendency', 'name']
-        da_freq = self.da_coll.freq
+        default_pod['name'] = df_base['name'][0]
 
         def inspect(t, tlo):
             pod = dict(default_pod)
@@ -185,31 +186,37 @@ class MarketTendencyValidator(object):
                 aggf = default_aggregator_gen(t, tlo)
                 _df_val['pl_pred'] = _df_val['prob'].groupby(pd.Grouper(freq=da_freq)). \
                     agg(aggf).astype(int).reindex(index=_df_val.index, method='ffill')
-                _df_val['frac_pos'] = float((_df_val['pl_pred'] != 0).astype(int).sum()) / len(_df_val)
-
-                # Compute performances
-                _df_val['pl_correct'] = (np.sign(_df_val['pl_pred']).astype(int) == np.sign(_df_val['market_tendency']).astype(int)).astype('int8')
-                _df_val['pl_correct'] = _df_val['pl_correct'].replace(0, -1)
-                _df_val.loc[_df_val['pl_pred'] == 0, 'pl_correct'] = 0
-                _df_val['gain'] = ((_df_val['pl_pred'] * _df_val['price_diff']) / gran).round(3)
-                _df_val['gain_cum'] = _df_val['gain'].cumsum().round(3)
-                _df_val['gain_per_pos'] = (_df_val['gain_cum'] / (_df_val['pl_pred'] != 0).cumsum()).round(3)
-                _df_val['accuracy'] = ((_df_val['pl_correct'] == 1).astype('int8').cumsum().astype(float) / (
-                            (_df_val['pl_pred'] != 0) & (_df_val['pl_correct'] != 0)).cumsum()).round(3).fillna(0.5)
-
-                # Add data for this point of the scan
-                fp = _df_val.iloc[-1, _df_val.columns.get_loc('frac_pos')]
-                pod.update({'name': _df_val['name'][0], 'frac_pos': fp})
-                for metri in METRICS:
-                    try:
-                        pod[metri] = _df_val.iloc[-1, _df_val.columns.get_loc(metri)]
-                    except:
-                        pass
-
+                fp = float((_df_val['pl_pred'] != 0).astype(int).sum()) / len(_df_val)
                 # If not enough positions taken -> discard
                 if fp < min_frac_pos:
-                    for metri in METRICS:
-                        pod[metri] = -1.E+06
+                    return pod
+
+                # Add frac_pos to dictionary
+                _df_val['frac_pos'] = fp
+
+                # Compute performances
+                if eval_metric == 'gain_cum':
+                    _df_val['gain'] = ((_df_val['pl_pred'] * _df_val['price_diff']) / gran).round(3)
+                    _df_val['gain_cum'] = _df_val['gain'].cumsum().round(3)
+                elif eval_metric == 'gain_per_pos':
+                    _df_val['gain'] = ((_df_val['pl_pred'] * _df_val['price_diff']) / gran).round(3)
+                    _df_val['gain_cum'] = _df_val['gain'].cumsum().round(3)
+                    _df_val['gain_per_pos'] = (_df_val['gain_cum'] / (_df_val['pl_pred'] != 0).cumsum()).round(3)
+                elif eval_metric == 'accuracy':
+                    _df_val['pl_correct'] = (np.sign(_df_val['pl_pred']).astype(int) == np.sign(_df_val['market_tendency']).astype(int)).astype('int8')
+                    _df_val['pl_correct'] = _df_val['pl_correct'].replace(0, -1)
+                    _df_val.loc[_df_val['pl_pred'] == 0, 'pl_correct'] = 0
+                    _df_val['accuracy'] = ((_df_val['pl_correct'] == 1).astype('int8').cumsum().astype(float) / (
+                                (_df_val['pl_pred'] != 0) & (_df_val['pl_correct'] != 0)).cumsum()).round(3).fillna(0.5)
+                elif eval_metric == 'accuracy_h':
+                    _df_val['pl_correct'] = (np.sign(_df_val['pl_pred']).astype(int) == np.sign(_df_val['market_tendency']).astype(int)).astype('int8')
+                    _df_val['pl_correct'] = _df_val['pl_correct'].replace(0, -1)
+                    _df_val.loc[_df_val['pl_pred'] == 0, 'pl_correct'] = 0
+                    df_h = get_hourly_stats(_df_val)
+                    _df_val['accuracy_h'] = df_h['accuracy'].reindex(index=_df_val.index, method='ffill')
+
+                # Assign eval metric to output dictionary
+                pod[eval_metric] = _df_val[eval_metric][-1]
             except Exception as e:
                 print str(e)
                 return pod
