@@ -24,10 +24,11 @@
 import os
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 import seaborn as sns
 # sns.set(style="whitegrid", color_codes=True)
 from defines import *
+import matplotlib.pyplot as plt
+plt.switch_backend('agg')
 
 
 def plot_hist_period(s, out_dir, tag='', group='1D', func=np.sum, **kwargs):
@@ -117,6 +118,43 @@ def plot_sns_class(df, plot_col, cat_col, out_dir, tag='', **kwargs):
     if kwargs.get('xlim', None) is not None:
         xlim = kwargs['xlim']
         ax.set_xlim(xlim[0], xlim[1])
+
+    plt.savefig(os.path.join(out_dir, fname))
+
+
+def plot_hist_period_roll(s, out_dir, tag='', group=10 * 24, func=np.sum, **kwargs):
+    what = s.name
+    fname = 'hist_' + what + '_group{0}{1}_roll.png'.format(group, tag)
+    s = s.rolling(group, min_periods=1).apply(func)
+    a = s.values
+
+    fig, ax = plt.subplots()
+    x_bins = kwargs.get('x_bins', None)
+    if x_bins is None:
+        x_min, x_max = min(a), max(a)
+        x_bins = np.linspace(x_min, x_max, 100)
+
+    ax.hist(a, alpha=0.7, histtype='step', bins=x_bins, color='blue', fill=True)
+
+    if kwargs.get('add_desc', False) is True:
+
+        desc = s.describe()
+        plt.text(0.02, 0.95, 'count = {0}'.format(int(desc['count'])), transform=ax.transAxes)
+        plt.text(0.02, 0.90, 'mean = {0:.4f}'.format(desc['mean']), transform=ax.transAxes)
+        plt.text(0.02, 0.85, 'std = {0:.4f}'.format(desc['std']), transform=ax.transAxes)
+        plt.text(0.02, 0.80, 'min = {0:.4f}'.format(desc['min']), transform=ax.transAxes)
+        plt.text(0.02, 0.75, '25% = {0:.4f}'.format(desc['25%']), transform=ax.transAxes)
+        plt.text(0.02, 0.70, 'median = {0:.4f}'.format(desc['50%']), transform=ax.transAxes)
+        plt.text(0.02, 0.65, '75% = {0:.4f}'.format(desc['75%']), transform=ax.transAxes)
+        plt.text(0.02, 0.60, 'max = {0:.4f}'.format(desc['max']), transform=ax.transAxes)
+
+    if kwargs.get('xlab', None) is not None:
+        plt.xlabel(kwargs['xlab'])
+    else:
+        plt.xlabel(what)
+
+    if kwargs.get('ylim', None):
+        plt.ylim(kwargs['ylim'])
 
     plt.savefig(os.path.join(out_dir, fname))
 
