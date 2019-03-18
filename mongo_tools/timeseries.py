@@ -383,23 +383,24 @@ def get_daily_ts_multi(db, coll_name, date_start, date_end, granularity='1H', da
             vals.setdefault(value_f, [])
             vals[value_f].extend(values)
 
-            # Add missing dates
-            if n_exp > n_res:
-                missing_dates = list(set(dates_exp) - set(dates_found))
-                for m in missing_dates:
-                    datetimes = pd.date_range(start=m,
-                                              end=m + timedelta(hours=23) + timedelta(minutes=59) + timedelta(seconds=59),
-                                              freq=granularity, tz=tz)
-                    # datetimes = datetimes.tz_localize(None)
-                    idx = bisect(dates, m)
-                    dates = dates[:idx] + datetimes.tolist() + dates[idx:]
-                    vals[value_f] = values[:idx] + [np.nan] * len(datetimes) + values[idx:]
-
         if tz is None:
             dates_found.append(dt)
         else:
             dates_found.append(timezone(tz).localize(dt))
         dates.extend(datetimes)
+
+    # Add missing dates
+    if n_exp > n_res:
+        missing_dates = list(set(dates_exp) - set(dates_found))
+        for m in missing_dates:
+            datetimes = pd.date_range(start=m,
+                                      end=m + timedelta(hours=23) + timedelta(minutes=59) + timedelta(seconds=59),
+                                      freq=granularity, tz=tz)
+            # datetimes = datetimes.tz_localize(None)
+            idx = bisect(dates, m)
+            dates = dates[:idx] + datetimes.tolist() + dates[idx:]
+            for value_f in value_field:
+                vals[value_f] = vals[value_f][:idx] + [np.nan] * len(datetimes) + vals[value_f][idx:]
 
     if out_format == 'dict':
         out_dict = {}
