@@ -32,7 +32,7 @@ logger = logging.getLogger(__file__)
 
 
 class Record(object):
-    def __init__(self, name, db_uri, db_name=None):
+    def __init__(self, name, db_uri, db_name=None, add_params=None):
 
         self.name = name
         self.db_uri = db_uri
@@ -53,6 +53,11 @@ class Record(object):
             msg = 'You must provide either valid db_uri and db_name or a valid connection'
             logger.error(msg)
             raise AttributeError(msg)
+
+        if add_params is None:
+            self.add_params = dict()
+        else:
+            self.add_params = add_params
 
     @classmethod
     def create_from_external(cls, _dict):
@@ -83,7 +88,7 @@ class Record(object):
 
     def _get_data(self, **kwargs):
 
-        self.data = get_record(self.conn, self.name, out_format='dataframe', **kwargs)
+        self.data = get_record(self.conn, self.name, out_format='dataframe', add_query=self.add_params, **kwargs)
 
         return
 
