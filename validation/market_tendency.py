@@ -28,7 +28,7 @@ import pandas as pd
 import numpy as np
 from plot_tools.timeseries import plot_ts_mpl
 from plot_tools.histogram import plot_hist_period, plot_sns_class, plot_hist_class, plot_scan
-from plot_tools.graph import plot_scan_1d
+from plot_tools.graph import plot_scan_1d, plot_pnl_cat
 from sklearn.metrics import roc_auc_score
 from joblib import Parallel, delayed
 import warnings
