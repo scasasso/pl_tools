@@ -46,3 +46,17 @@ def plot_scan_1d(df, what, out_dir, tag=''):
     plt.xlabel('threshold')
     plt.tight_layout()
     plt.savefig(os.path.join(out_dir, fname + '.png'))
+
+
+def plot_pnl_cat(df, what, cat, out_dir, tag='', estimator=np.sum):
+    # Filename
+    fname = 'pnl_cat_%s_%s%s' % (what, cat, tag)
+
+    plt.close('all')
+
+    # Groupby
+    gpb = df.groupby(cat)[what].agg(estimator)
+    gpb.plot(kind='bar', color=(gpb > 0.).map({True: 'g', False: 'r'}))
+    plt.ylabel('PnL Euro')
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, fname + '.png'))

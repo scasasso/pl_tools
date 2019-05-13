@@ -600,3 +600,8 @@ class MarketTendencyPlotter(object):
         for df in self.df_val:
             add_tag = '_' + df['name'][0] if len(self.df_val) > 1 else ''
             plot_hist_class(df, what, category,  self.out_dir, tag=add_tag, **kwargs)
+
+    def plot_pnl_cat(self, what, category, **kwargs):
+        for df in self.df_val:
+            add_tag = '_' + df['name'][0] if len(self.df_val) > 1 else ''
+            plot_pnl_cat(df, what, category, self.out_dir, tag=add_tag, **kwargs)
